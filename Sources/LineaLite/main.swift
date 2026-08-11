@@ -1,18 +1,115 @@
 import AppKit
+import ApplicationServices
 import AVFoundation
+import Carbon
 import Speech
 
-final class SpeechRecorder {
-  private let audioEngine = AVAudioEngine()
-  private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
-  private var request: SFSpeechAudioBufferRecognitionRequest?
-  private var task: SFSpeechRecognitionTask?
+private let hotKeySignature = OSType("LITE".unicodeScalars.reduce(0) { ($0 << 8) + OSType($1.value) })
+private let pasteKeyCode: CGKeyCode = 9
 
-  var onText: (String) -> Void = { _ in }
-  var onStatus: (String) -> Void = { _ in }
+private enum DictationError: LocalizedError {
+  case busy
+  case notAvailable
+  case noOnDeviceRecognition
+  case noAudio
+
+  var errorDescription: String? {
+    switch self {
+    case .busy:
+      "Still working."
+    case .notAvailable:
+      "Speech recognition is not available."
+    case .noOnDeviceRecognition:
+      "On-device zh-CN recognition is not available."
+    case .noAudio:
+      "No audio was recorded."
+    }
+  }
+}
+
+private final class PushToTalkHotKey {
+  private var hotKeyRef: EventHotKeyRef?
+  private var handlerRef: EventHandlerRef?
+  private let onPress: () -> Void
+  private let onRelease: () -> Void
+
+  init(onPress: @escaping () -> Void, onRelease: @escaping () -> Void) {
+    self.onPress = onPress
+    self.onRelease = onRelease
+  }
+
+  func register() -> OSStatus {
+    var eventTypes = [
+      EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+      EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+    ]
+
+    let handlerStatus = InstallEventHandler(
+      GetApplicationEventTarget(),
+      hotKeyHandler,
+      eventTypes.count,
+      &eventTypes,
+      Unmanaged.passUnretained(self).toOpaque(),
+      &handlerRef
+    )
+    guard handlerStatus == noErr else {
+      return handlerStatus
+    }
+
+    let hotKeyID = EventHotKeyID(signature: hotKeySignature, id: 1)
+    return RegisterEventHotKey(
+      UInt32(kVK_Space),
+      UInt32(controlKey | optionKey | cmdKey),
+      hotKeyID,
+      GetApplicationEventTarget(),
+      0,
+      &hotKeyRef
+    )
+  }
+
+  func handle(_ kind: UInt32) {
+    if kind == UInt32(kEventHotKeyPressed) {
+      onPress()
+    } else if kind == UInt32(kEventHotKeyReleased) {
+      onRelease()
+    }
+  }
+
+  deinit {
+    if let hotKeyRef {
+      UnregisterEventHotKey(hotKeyRef)
+    }
+    if let handlerRef {
+      RemoveEventHandler(handlerRef)
+    }
+  }
+}
+
+private func hotKeyHandler(
+  _ nextHandler: EventHandlerCallRef?,
+  _ event: EventRef?,
+  _ userData: UnsafeMutableRawPointer?
+) -> OSStatus {
+  guard let event, let userData else {
+    return noErr
+  }
+  Unmanaged<PushToTalkHotKey>
+    .fromOpaque(userData)
+    .takeUnretainedValue()
+    .handle(GetEventKind(event))
+  return noErr
+}
+
+private final class DictationEngine {
+  private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
+  private var recorder: AVAudioRecorder?
+  private var task: SFSpeechRecognitionTask?
+  private var startedAt: Date?
+  private var audioURL: URL?
+  private var isTranscribing = false
 
   var isRecording: Bool {
-    audioEngine.isRunning
+    recorder?.isRecording == true
   }
 
   func requestAccess(_ completion: @escaping (Bool) -> Void) {
@@ -26,189 +123,218 @@ final class SpeechRecorder {
   }
 
   func start() throws {
+    guard !isTranscribing else {
+      throw DictationError.busy
+    }
     guard let recognizer, recognizer.isAvailable else {
-      onStatus("Speech recognition is not available.")
-      return
+      throw DictationError.notAvailable
     }
-
-    stop()
-
     guard recognizer.supportsOnDeviceRecognition else {
-      onStatus("On-device speech recognition is not available for zh-CN.")
-      return
+      throw DictationError.noOnDeviceRecognition
     }
 
-    let request = SFSpeechAudioBufferRecognitionRequest()
-    request.shouldReportPartialResults = true
-    request.requiresOnDeviceRecognition = true
-    self.request = request
+    stopRecording()
+    task?.cancel()
 
-    let input = audioEngine.inputNode
-    let format = input.outputFormat(forBus: 0)
-    input.removeTap(onBus: 0)
-    input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak request] buffer, _ in
-      request?.append(buffer)
-    }
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("linea-lite-\(UUID().uuidString).m4a")
+    let settings: [String: Any] = [
+      AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+      AVSampleRateKey: 44_100,
+      AVNumberOfChannelsKey: 1,
+      AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+    ]
 
-    task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-      DispatchQueue.main.async {
-        if let text = result?.bestTranscription.formattedString {
-          self?.onText(cleanedTranscript(text))
-        }
-        if error != nil {
-          self?.stop()
-          self?.onStatus("Stopped.")
-        }
-      }
-    }
+    let recorder = try AVAudioRecorder(url: url, settings: settings)
+    recorder.prepareToRecord()
+    recorder.record()
 
-    audioEngine.prepare()
-    try audioEngine.start()
-    onStatus("Listening...")
+    self.recorder = recorder
+    startedAt = Date()
+    audioURL = url
   }
 
-  func stop() {
-    if audioEngine.isRunning {
-      audioEngine.stop()
-      audioEngine.inputNode.removeTap(onBus: 0)
+  func stopAndTranscribe(_ completion: @escaping (Result<(String, TimeInterval), Error>) -> Void) {
+    guard let url = audioURL, let startedAt else {
+      completion(.failure(DictationError.noAudio))
+      return
     }
-    request?.endAudio()
-    task?.cancel()
-    request = nil
+
+    let duration = Date().timeIntervalSince(startedAt)
+    stopRecording()
+    transcribe(url: url, duration: duration, completion)
+  }
+
+  private func stopRecording() {
+    recorder?.stop()
+    recorder = nil
+    startedAt = nil
+  }
+
+  private func transcribe(
+    url: URL,
+    duration: TimeInterval,
+    _ completion: @escaping (Result<(String, TimeInterval), Error>) -> Void
+  ) {
+    guard let recognizer else {
+      completion(.failure(DictationError.notAvailable))
+      return
+    }
+
+    isTranscribing = true
+    var didFinish = false
+    let request = SFSpeechURLRecognitionRequest(url: url)
+    request.requiresOnDeviceRecognition = true
+
+    task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+      guard let self, !didFinish else { return }
+
+      if let result, result.isFinal {
+        didFinish = true
+        self.finish(url: url)
+        completion(.success((cleanedTranscript(result.bestTranscription.formattedString), duration)))
+      } else if let error {
+        didFinish = true
+        self.finish(url: url)
+        completion(.failure(error))
+      }
+    }
+  }
+
+  private func finish(url: URL) {
+    isTranscribing = false
     task = nil
+    audioURL = nil
+    try? FileManager.default.removeItem(at: url)
   }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
-  private let recorder = SpeechRecorder()
-  private let statusLabel = NSTextField(labelWithString: "Ready.")
-  private let textView = NSTextView()
-  private let recordButton = NSButton(title: "Start recording", target: nil, action: nil)
-  private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
-  private let clearButton = NSButton(title: "Clear", target: nil, action: nil)
+private final class AppDelegate: NSObject, NSApplicationDelegate {
+  private let engine = DictationEngine()
+  private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+  private var hotKey: PushToTalkHotKey?
+  private var status = "Hold ⌃⌥⌘Space to dictate"
+  private var recordings = 0
+  private var seconds: TimeInterval = 0
+  private var characters = 0
 
-  private var window: NSWindow?
+  private let statusMenuItem = NSMenuItem()
+  private let statsMenuItem = NSMenuItem()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    NSApp.setActivationPolicy(.regular)
-    buildWindow()
+    NSApp.setActivationPolicy(.accessory)
+    buildMenu()
+    requestAccessibility()
 
-    recorder.onText = { [weak self] text in
-      self?.textView.string = text
-    }
-    recorder.onStatus = { [weak self] status in
-      self?.statusLabel.stringValue = status
-      self?.recordButton.title = self?.recorder.isRecording == true ? "Stop recording" : "Start recording"
-    }
-  }
-
-  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    true
-  }
-
-  private func buildWindow() {
-    let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 640, height: 460),
-      styleMask: [.titled, .closable, .miniaturizable, .resizable],
-      backing: .buffered,
-      defer: false
+    hotKey = PushToTalkHotKey(
+      onPress: { [weak self] in self?.startDictation() },
+      onRelease: { [weak self] in self?.finishDictation() }
     )
-    window.title = "Linea Lite"
-    window.center()
-
-    let title = NSTextField(labelWithString: "Linea Lite")
-    title.font = .systemFont(ofSize: 28, weight: .semibold)
-
-    statusLabel.textColor = .secondaryLabelColor
-
-    textView.font = .systemFont(ofSize: 18)
-    textView.isAutomaticQuoteSubstitutionEnabled = false
-    textView.isAutomaticDashSubstitutionEnabled = false
-    textView.string = ""
-
-    let scrollView = NSScrollView()
-    scrollView.borderType = .bezelBorder
-    scrollView.hasVerticalScroller = true
-    scrollView.documentView = textView
-
-    recordButton.bezelStyle = .rounded
-    recordButton.target = self
-    recordButton.action = #selector(toggleRecording)
-
-    copyButton.bezelStyle = .rounded
-    copyButton.target = self
-    copyButton.action = #selector(copyTranscript)
-
-    clearButton.bezelStyle = .rounded
-    clearButton.target = self
-    clearButton.action = #selector(clearTranscript)
-
-    let controls = NSStackView(views: [recordButton, copyButton, clearButton])
-    controls.orientation = .horizontal
-    controls.spacing = 8
-
-    let stack = NSStackView(views: [title, statusLabel, scrollView, controls])
-    stack.orientation = .vertical
-    stack.alignment = .leading
-    stack.spacing = 14
-    stack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
-    stack.translatesAutoresizingMaskIntoConstraints = false
-
-    window.contentView = NSView()
-    window.contentView?.addSubview(stack)
-
-    NSLayoutConstraint.activate([
-      stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor),
-      stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor),
-      stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor),
-      stack.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor),
-      scrollView.widthAnchor.constraint(equalTo: stack.widthAnchor),
-      scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
-    ])
-
-    window.makeKeyAndOrderFront(nil)
-    NSApp.activate(ignoringOtherApps: true)
-    self.window = window
+    let hotKeyStatus = hotKey?.register() ?? noErr
+    if hotKeyStatus != noErr {
+      status = "Hotkey registration failed: \(hotKeyStatus)"
+    }
+    refreshMenu()
   }
 
-  @objc private func toggleRecording() {
-    if recorder.isRecording {
-      recorder.stop()
-      statusLabel.stringValue = "Stopped."
-      recordButton.title = "Start recording"
+  private func buildMenu() {
+    let menu = NSMenu()
+    statusMenuItem.isEnabled = false
+    statsMenuItem.isEnabled = false
+    menu.addItem(statusMenuItem)
+    menu.addItem(statsMenuItem)
+    menu.addItem(NSMenuItem.separator())
+    menu.addItem(NSMenuItem(title: "Shortcut: hold ⌃⌥⌘Space", action: nil, keyEquivalent: ""))
+    menu.addItem(NSMenuItem.separator())
+    menu.addItem(NSMenuItem(title: "Quit Linea Lite", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q"))
+    statusItem.menu = menu
+  }
+
+  private func startDictation() {
+    guard !engine.isRecording else { return }
+    status = "Requesting permission..."
+    refreshMenu()
+
+    engine.requestAccess { [weak self] allowed in
+      guard let self else { return }
+      guard allowed else {
+        self.status = "Microphone or speech permission denied"
+        self.refreshMenu()
+        return
+      }
+
+      do {
+        try self.engine.start()
+        self.status = "Recording..."
+      } catch {
+        self.status = error.localizedDescription
+      }
+      self.refreshMenu()
+    }
+  }
+
+  private func finishDictation() {
+    guard engine.isRecording else { return }
+    status = "Transcribing..."
+    refreshMenu()
+
+    engine.stopAndTranscribe { [weak self] result in
+      DispatchQueue.main.async {
+        guard let self else { return }
+
+        switch result {
+        case .success((let text, let duration)):
+          guard !text.isEmpty else {
+            self.status = "No speech detected"
+            self.refreshMenu()
+            return
+          }
+          self.recordings += 1
+          self.seconds += duration
+          self.characters += text.count
+          self.insertAtCursor(text)
+          self.status = "Inserted \(text.count) chars"
+        case .failure(let error):
+          self.status = error.localizedDescription
+        }
+        self.refreshMenu()
+      }
+    }
+  }
+
+  private func insertAtCursor(_ text: String) {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
+
+    guard AXIsProcessTrusted() else {
+      requestAccessibility()
+      status = "Copied; enable Accessibility to auto-insert"
       return
     }
 
-    statusLabel.stringValue = "Requesting permission..."
-    recorder.requestAccess { [weak self] allowed in
-      guard let self else { return }
-      guard allowed else {
-        self.statusLabel.stringValue = "Microphone or speech permission was denied."
-        return
-      }
-      do {
-        try self.recorder.start()
-        self.recordButton.title = "Stop recording"
-      } catch {
-        self.statusLabel.stringValue = "Could not start recording: \(error.localizedDescription)"
-      }
-    }
+    let source = CGEventSource(stateID: .hidSystemState)
+    let down = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: true)
+    let up = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: false)
+    down?.flags = .maskCommand
+    up?.flags = .maskCommand
+    down?.post(tap: .cghidEventTap)
+    up?.post(tap: .cghidEventTap)
   }
 
-  @objc private func copyTranscript() {
-    let pasteboard = NSPasteboard.general
-    pasteboard.clearContents()
-    pasteboard.setString(cleanedTranscript(textView.string), forType: .string)
-    statusLabel.stringValue = "Copied."
+  private func requestAccessibility() {
+    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+    AXIsProcessTrustedWithOptions(options)
   }
 
-  @objc private func clearTranscript() {
-    textView.string = ""
-    statusLabel.stringValue = "Ready."
+  private func refreshMenu() {
+    statusItem.button?.title = engine.isRecording ? "● Linea" : "Linea \(recordings)"
+    statusMenuItem.title = status
+    statsMenuItem.title = "\(recordings) clips · \(Int(seconds))s · \(characters) chars"
   }
 }
 
 let app = NSApplication.shared
-let delegate = AppDelegate()
+private let delegate = AppDelegate()
 app.delegate = delegate
 app.run()

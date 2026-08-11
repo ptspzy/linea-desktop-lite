@@ -1,6 +1,6 @@
 # Linea Desktop Lite
 
-Minimal macOS desktop dictation app extracted from the Linea idea for open source.
+Minimal macOS menu bar dictation app extracted from the Linea idea for open source.
 
 ## Scope
 
@@ -8,14 +8,15 @@ Included:
 
 - Native macOS microphone capture.
 - Native macOS on-device speech recognition for zh-CN.
-- Transcript editing.
-- Copy to clipboard.
+- Push-to-talk dictation with `Control + Option + Command + Space`.
+- Paste into the current cursor location.
+- Session stats in the menu bar.
 
 Not included:
 
 - Accounts, activation codes, payments, telemetry, updater, or server APIs.
 - Bundled ASR models, Python sidecars, benchmarks, history database, or agents.
-- Global shortcuts, remote mic, cloud correction, vocabulary packs, or insight pages.
+- Remote mic, cloud correction, vocabulary packs, windows, editors, or insight pages.
 
 ## Requirements
 
@@ -42,6 +43,7 @@ make run
 
 macOS will ask for microphone and speech-recognition permission on first use.
 The app intentionally does not fall back to cloud recognition.
+Accessibility permission is needed for automatic paste into the current app.
 
 ## Test
 

@@ -9,7 +9,7 @@ SOURCES := Sources/LineaLite/TextCleanup.swift Sources/LineaLite/main.swift
 build:
 	mkdir -p "$(APP_DIR)/Contents/MacOS"
 	cp Info.plist "$(APP_DIR)/Contents/Info.plist"
-	xcrun swiftc -O -framework AppKit -framework AVFoundation -framework Speech $(SOURCES) -o "$(BIN)"
+	xcrun swiftc -O -framework AppKit -framework ApplicationServices -framework AVFoundation -framework Carbon -framework Speech $(SOURCES) -o "$(BIN)"
 
 run: build
 	open "$(APP_DIR)"
