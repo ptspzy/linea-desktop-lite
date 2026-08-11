@@ -8,7 +8,7 @@ Included:
 
 - Native macOS microphone capture.
 - Native macOS on-device speech recognition for zh-CN.
-- Push-to-talk dictation with `Control + Option + Command + Space`.
+- Push-to-talk dictation by holding `Control`.
 - Paste into the current cursor location.
 - Session stats in the menu bar.
 
@@ -43,7 +43,7 @@ make run
 
 macOS will ask for microphone and speech-recognition permission on first use.
 The app intentionally does not fall back to cloud recognition.
-Accessibility permission is needed for automatic paste into the current app.
+Accessibility permission is needed for Control-key detection and automatic paste.
 
 ## Test
 

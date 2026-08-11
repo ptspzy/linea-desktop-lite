@@ -1,10 +1,8 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
-import Carbon
 import Speech
 
-private let hotKeySignature = OSType("LITE".unicodeScalars.reduce(0) { ($0 << 8) + OSType($1.value) })
 private let pasteKeyCode: CGKeyCode = 9
 
 private enum DictationError: LocalizedError {
@@ -27,9 +25,10 @@ private enum DictationError: LocalizedError {
   }
 }
 
-private final class PushToTalkHotKey {
-  private var hotKeyRef: EventHotKeyRef?
-  private var handlerRef: EventHandlerRef?
+private final class PushToTalkKey {
+  private var globalMonitor: Any?
+  private var localMonitor: Any?
+  private var isPressed = false
   private let onPress: () -> Void
   private let onRelease: () -> Void
 
@@ -38,66 +37,38 @@ private final class PushToTalkHotKey {
     self.onRelease = onRelease
   }
 
-  func register() -> OSStatus {
-    var eventTypes = [
-      EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
-      EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
-    ]
-
-    let handlerStatus = InstallEventHandler(
-      GetApplicationEventTarget(),
-      hotKeyHandler,
-      eventTypes.count,
-      &eventTypes,
-      Unmanaged.passUnretained(self).toOpaque(),
-      &handlerRef
-    )
-    guard handlerStatus == noErr else {
-      return handlerStatus
+  func register() {
+    globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+      self?.handle(event)
     }
-
-    let hotKeyID = EventHotKeyID(signature: hotKeySignature, id: 1)
-    return RegisterEventHotKey(
-      UInt32(kVK_Space),
-      UInt32(controlKey | optionKey | cmdKey),
-      hotKeyID,
-      GetApplicationEventTarget(),
-      0,
-      &hotKeyRef
-    )
+    localMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+      self?.handle(event)
+      return event
+    }
   }
 
-  func handle(_ kind: UInt32) {
-    if kind == UInt32(kEventHotKeyPressed) {
+  private func handle(_ event: NSEvent) {
+    let pressed = event.modifierFlags
+      .intersection(.deviceIndependentFlagsMask)
+      .contains(.control)
+    guard pressed != isPressed else { return }
+
+    isPressed = pressed
+    if pressed {
       onPress()
-    } else if kind == UInt32(kEventHotKeyReleased) {
+    } else {
       onRelease()
     }
   }
 
   deinit {
-    if let hotKeyRef {
-      UnregisterEventHotKey(hotKeyRef)
+    if let globalMonitor {
+      NSEvent.removeMonitor(globalMonitor)
     }
-    if let handlerRef {
-      RemoveEventHandler(handlerRef)
+    if let localMonitor {
+      NSEvent.removeMonitor(localMonitor)
     }
   }
-}
-
-private func hotKeyHandler(
-  _ nextHandler: EventHandlerCallRef?,
-  _ event: EventRef?,
-  _ userData: UnsafeMutableRawPointer?
-) -> OSStatus {
-  guard let event, let userData else {
-    return noErr
-  }
-  Unmanaged<PushToTalkHotKey>
-    .fromOpaque(userData)
-    .takeUnretainedValue()
-    .handle(GetEventKind(event))
-  return noErr
 }
 
 private final class DictationEngine {
@@ -212,8 +183,8 @@ private final class DictationEngine {
 private final class AppDelegate: NSObject, NSApplicationDelegate {
   private let engine = DictationEngine()
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-  private var hotKey: PushToTalkHotKey?
-  private var status = "Hold ⌃⌥⌘Space to dictate"
+  private var hotKey: PushToTalkKey?
+  private var status = "Hold Control to dictate"
   private var recordings = 0
   private var seconds: TimeInterval = 0
   private var characters = 0
@@ -226,14 +197,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     buildMenu()
     requestAccessibility()
 
-    hotKey = PushToTalkHotKey(
+    hotKey = PushToTalkKey(
       onPress: { [weak self] in self?.startDictation() },
       onRelease: { [weak self] in self?.finishDictation() }
     )
-    let hotKeyStatus = hotKey?.register() ?? noErr
-    if hotKeyStatus != noErr {
-      status = "Hotkey registration failed: \(hotKeyStatus)"
-    }
+    hotKey?.register()
     refreshMenu()
   }
 
@@ -244,7 +212,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     menu.addItem(statusMenuItem)
     menu.addItem(statsMenuItem)
     menu.addItem(NSMenuItem.separator())
-    menu.addItem(NSMenuItem(title: "Shortcut: hold ⌃⌥⌘Space", action: nil, keyEquivalent: ""))
+    menu.addItem(NSMenuItem(title: "Shortcut: hold Control", action: nil, keyEquivalent: ""))
     menu.addItem(NSMenuItem.separator())
     menu.addItem(NSMenuItem(title: "Quit Linea Lite", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q"))
     statusItem.menu = menu
