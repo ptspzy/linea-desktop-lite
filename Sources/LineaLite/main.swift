@@ -28,9 +28,13 @@ private enum DictationError: LocalizedError {
 private final class PushToTalkKey {
   private var globalMonitor: Any?
   private var localMonitor: Any?
-  private var isPressed = false
+  private var state = PushToTalkState()
   private let onPress: () -> Void
   private let onRelease: () -> Void
+
+  var isPressed: Bool {
+    state.isPressed
+  }
 
   init(onPress: @escaping () -> Void, onRelease: @escaping () -> Void) {
     self.onPress = onPress
@@ -38,6 +42,7 @@ private final class PushToTalkKey {
   }
 
   func register() {
+    guard globalMonitor == nil, localMonitor == nil else { return }
     globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
       self?.handle(event)
     }
@@ -51,13 +56,19 @@ private final class PushToTalkKey {
     let pressed = event.modifierFlags
       .intersection(.deviceIndependentFlagsMask)
       .contains(.control)
-    guard pressed != isPressed else { return }
+    DispatchQueue.main.async { [weak self] in
+      self?.handle(pressed)
+    }
+  }
 
-    isPressed = pressed
-    if pressed {
+  private func handle(_ pressed: Bool) {
+    switch state.transition(to: pressed) {
+    case .pressed:
       onPress()
-    } else {
+    case .released:
       onRelease()
+    case nil:
+      break
     }
   }
 
@@ -184,6 +195,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
   private let engine = DictationEngine()
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private var hotKey: PushToTalkKey?
+  private var accessibilityTimer: Timer?
+  private var isStarting = false
   private var status = "Hold Control to dictate"
   private var recordings = 0
   private var seconds: TimeInterval = 0
@@ -195,14 +208,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
     buildMenu()
-    requestAccessibility()
 
     hotKey = PushToTalkKey(
       onPress: { [weak self] in self?.startDictation() },
       onRelease: { [weak self] in self?.finishDictation() }
     )
-    hotKey?.register()
-    refreshMenu()
+    prepareAccessibility()
   }
 
   private func buildMenu() {
@@ -219,14 +230,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func startDictation() {
-    guard !engine.isRecording else { return }
+    guard !engine.isRecording, !isStarting else { return }
+    isStarting = true
     status = "Requesting permission..."
     refreshMenu()
 
     engine.requestAccess { [weak self] allowed in
       guard let self else { return }
+      self.isStarting = false
       guard allowed else {
         self.status = "Microphone or speech permission denied"
+        self.refreshMenu()
+        return
+      }
+      guard self.hotKey?.isPressed == true else {
+        self.status = "Hold Control to dictate"
         self.refreshMenu()
         return
       }
@@ -242,7 +260,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func finishDictation() {
-    guard engine.isRecording else { return }
+    guard engine.isRecording else {
+      status = "Hold Control to dictate"
+      refreshMenu()
+      return
+    }
     status = "Transcribing..."
     refreshMenu()
 
@@ -295,8 +317,31 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     AXIsProcessTrustedWithOptions(options)
   }
 
+  private func prepareAccessibility() {
+    guard !AXIsProcessTrusted() else {
+      enableHotKey()
+      return
+    }
+
+    status = "Enable Accessibility to use Control"
+    refreshMenu()
+    requestAccessibility()
+    accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+      guard AXIsProcessTrusted() else { return }
+      timer.invalidate()
+      self?.enableHotKey()
+    }
+  }
+
+  private func enableHotKey() {
+    accessibilityTimer = nil
+    hotKey?.register()
+    status = "Hold Control to dictate"
+    refreshMenu()
+  }
+
   private func refreshMenu() {
-    statusItem.button?.title = engine.isRecording ? "● Linea" : "Linea \(recordings)"
+    statusItem.button?.title = hotKey?.isPressed == true ? "● Linea" : "Linea \(recordings)"
     statusMenuItem.title = status
     statsMenuItem.title = "\(recordings) clips · \(Int(seconds))s · \(characters) chars"
   }

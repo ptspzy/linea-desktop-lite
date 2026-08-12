@@ -43,7 +43,7 @@ make run
 
 macOS will ask for microphone and speech-recognition permission on first use.
 The app intentionally does not fall back to cloud recognition.
-Accessibility permission is needed for Control-key detection and automatic paste.
+Accessibility permission is needed for Control-key detection and automatic paste. Once it is enabled, Linea starts listening without a restart.
 
 ## Test
 
