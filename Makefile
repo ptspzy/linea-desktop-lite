@@ -3,7 +3,7 @@ BUNDLE_ID := io.github.linea.desktop-lite
 BUILD_DIR := build
 APP_DIR := $(BUILD_DIR)/$(APP_NAME).app
 BIN := $(APP_DIR)/Contents/MacOS/$(APP_NAME)
-SOURCES := Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/main.swift
+SOURCES := Sources/LineaLite/CaptureHUD.swift Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/main.swift
 
 .PHONY: build run test clean
 
@@ -19,7 +19,7 @@ run: build
 
 test:
 	mkdir -p "$(BUILD_DIR)"
-	xcrun swiftc Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/TextCleanup.swift Tests/main.swift -o "$(BUILD_DIR)/tests"
+	xcrun swiftc Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/TextCleanup.swift Tests/main.swift -o "$(BUILD_DIR)/tests"
 	"$(BUILD_DIR)/tests"
 
 clean:

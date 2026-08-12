@@ -94,6 +94,12 @@ private final class DictationEngine {
     recorder?.isRecording == true
   }
 
+  var audioLevel: Double {
+    guard let recorder, recorder.isRecording else { return 0 }
+    recorder.updateMeters()
+    return captureAudioLevel(decibels: recorder.averagePower(forChannel: 0))
+  }
+
   func requestAccess(_ completion: @escaping (Bool) -> Void) {
     SFSpeechRecognizer.requestAuthorization { speechStatus in
       AVCaptureDevice.requestAccess(for: .audio) { microphoneAllowed in
@@ -128,6 +134,7 @@ private final class DictationEngine {
     ]
 
     let recorder = try AVAudioRecorder(url: url, settings: settings)
+    recorder.isMeteringEnabled = true
     recorder.prepareToRecord()
     recorder.record()
 
@@ -193,9 +200,11 @@ private final class DictationEngine {
 
 private final class AppDelegate: NSObject, NSApplicationDelegate {
   private let engine = DictationEngine()
+  private let hud = CaptureHUD()
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private var hotKey: PushToTalkKey?
   private var accessibilityTimer: Timer?
+  private var levelTimer: Timer?
   private var isStarting = false
   private var status = "Hold Control to dictate"
   private var recordings = 0
@@ -232,6 +241,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
   private func startDictation() {
     guard !engine.isRecording, !isStarting else { return }
     isStarting = true
+    hud.showRecording()
     status = "Requesting permission..."
     refreshMenu()
 
@@ -240,11 +250,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
       self.isStarting = false
       guard allowed else {
         self.status = "Microphone or speech permission denied"
+        self.hud.showError()
         self.refreshMenu()
         return
       }
       guard self.hotKey?.isPressed == true else {
         self.status = "Hold Control to dictate"
+        self.hud.hide()
         self.refreshMenu()
         return
       }
@@ -252,8 +264,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
       do {
         try self.engine.start()
         self.status = "Recording..."
+        self.startLevelUpdates()
       } catch {
         self.status = error.localizedDescription
+        self.hud.showError()
       }
       self.refreshMenu()
     }
@@ -261,10 +275,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func finishDictation() {
     guard engine.isRecording else {
+      hud.hide()
       status = "Hold Control to dictate"
       refreshMenu()
       return
     }
+    stopLevelUpdates()
+    hud.showProcessing()
     status = "Transcribing..."
     refreshMenu()
 
@@ -276,6 +293,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         case .success((let text, let duration)):
           guard !text.isEmpty else {
             self.status = "No speech detected"
+            self.hud.showError()
             self.refreshMenu()
             return
           }
@@ -284,8 +302,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
           self.characters += text.count
           self.insertAtCursor(text)
           self.status = "Inserted \(text.count) chars"
+          self.hud.showComplete()
         case .failure(let error):
           self.status = error.localizedDescription
+          self.hud.showError()
         }
         self.refreshMenu()
       }
@@ -338,6 +358,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     hotKey?.register()
     status = "Hold Control to dictate"
     refreshMenu()
+  }
+
+  private func startLevelUpdates() {
+    stopLevelUpdates()
+    let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+      guard let self else { return }
+      self.hud.setLevel(self.engine.audioLevel)
+    }
+    levelTimer = timer
+    RunLoop.main.add(timer, forMode: .common)
+  }
+
+  private func stopLevelUpdates() {
+    levelTimer?.invalidate()
+    levelTimer = nil
   }
 
   private func refreshMenu() {
