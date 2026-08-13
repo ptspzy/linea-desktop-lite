@@ -1,5 +1,6 @@
 APP_NAME := Linea Lite
 BUNDLE_ID := io.github.linea.desktop-lite
+SIGN_IDENTITY ?= Linea Local Development
 BUILD_DIR := build
 APP_DIR := $(BUILD_DIR)/$(APP_NAME).app
 BIN := $(APP_DIR)/Contents/MacOS/$(APP_NAME)
@@ -11,7 +12,11 @@ build:
 	mkdir -p "$(APP_DIR)/Contents/MacOS"
 	cp Info.plist "$(APP_DIR)/Contents/Info.plist"
 	xcrun swiftc -O -framework AppKit -framework ApplicationServices -framework AVFoundation -framework Speech $(SOURCES) -o "$(BIN)"
-	codesign --force --sign - --identifier "$(BUNDLE_ID)" "$(APP_DIR)"
+	@if security find-identity -v -p codesigning | /usr/bin/grep -Fq '"$(SIGN_IDENTITY)"'; then \
+		codesign --force --sign "$(SIGN_IDENTITY)" --identifier "$(BUNDLE_ID)" "$(APP_DIR)"; \
+	else \
+		codesign --force --sign - --identifier "$(BUNDLE_ID)" "$(APP_DIR)"; \
+	fi
 	codesign --verify --deep --strict "$(APP_DIR)"
 
 run: build
