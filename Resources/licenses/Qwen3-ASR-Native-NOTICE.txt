@@ -1,0 +1,12 @@
+Linea bundles the following third-party components for local speech recognition:
+
+- Qwen3-ASR 0.6B, Copyright Alibaba Cloud, licensed under Apache-2.0.
+  https://github.com/QwenLM/Qwen3-ASR
+- qwen3-asr-0.6b Q4_K GGUF conversion by cstr, licensed under Apache-2.0.
+  https://huggingface.co/cstr/qwen3-asr-0.6b-GGUF
+- CrispASR native runtime, licensed under the MIT License.
+  https://github.com/CrispStrobe/CrispASR
+
+The full Apache-2.0 and CrispASR MIT license texts are included alongside this
+notice as Apache-2.0.txt and CrispASR-MIT.txt. This notice does not modify
+their terms.

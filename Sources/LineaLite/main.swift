@@ -105,11 +105,9 @@ private final class DictationEngine {
   }
 
   func requestAccess(_ completion: @escaping (Bool) -> Void) {
-    SFSpeechRecognizer.requestAuthorization { speechStatus in
-      AVCaptureDevice.requestAccess(for: .audio) { microphoneAllowed in
-        DispatchQueue.main.async {
-          completion(speechStatus == .authorized && microphoneAllowed)
-        }
+    AVCaptureDevice.requestAccess(for: .audio) { microphoneAllowed in
+      DispatchQueue.main.async {
+        completion(microphoneAllowed)
       }
     }
   }
@@ -118,23 +116,19 @@ private final class DictationEngine {
     guard !isTranscribing else {
       throw DictationError.busy
     }
-    guard let recognizer, recognizer.isAvailable else {
-      throw DictationError.notAvailable
-    }
-    guard recognizer.supportsOnDeviceRecognition else {
-      throw DictationError.noOnDeviceRecognition
-    }
 
     stopRecording()
     task?.cancel()
 
     let url = FileManager.default.temporaryDirectory
-      .appendingPathComponent("linea-lite-\(UUID().uuidString).m4a")
+      .appendingPathComponent("linea-lite-\(UUID().uuidString).wav")
     let settings: [String: Any] = [
-      AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-      AVSampleRateKey: 44_100,
+      AVFormatIDKey: Int(kAudioFormatLinearPCM),
+      AVSampleRateKey: 16_000,
       AVNumberOfChannelsKey: 1,
-      AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+      AVLinearPCMBitDepthKey: 16,
+      AVLinearPCMIsFloatKey: false,
+      AVLinearPCMIsBigEndianKey: false,
     ]
 
     let recorder = try AVAudioRecorder(url: url, settings: settings)
@@ -170,20 +164,28 @@ private final class DictationEngine {
     _ completion: @escaping (Result<(String, TimeInterval), Error>) -> Void
   ) {
     isTranscribing = true
-    if #available(macOS 26.0, *) {
-      Task { [weak self] in
-        guard let self else { return }
-        do {
-          let text = try await self.transcribeWithSpeechAnalyzer(url: url)
-          self.finish(url: url)
-          completion(.success((text, duration)))
-        } catch {
+    Task { [weak self] in
+      guard let self else { return }
+      do {
+        let text = try await Task.detached(priority: .userInitiated) {
+          try transcribeWithQwen(audioURL: url)
+        }.value
+        self.finish(url: url)
+        completion(.success((text, duration)))
+      } catch {
+        if #available(macOS 26.0, *) {
+          do {
+            let text = try await self.transcribeWithSpeechAnalyzer(url: url)
+            self.finish(url: url)
+            completion(.success((text, duration)))
+          } catch {
+            self.transcribeWithLegacyRecognizer(url: url, duration: duration, completion)
+          }
+        } else {
           self.transcribeWithLegacyRecognizer(url: url, duration: duration, completion)
         }
       }
-      return
     }
-    transcribeWithLegacyRecognizer(url: url, duration: duration, completion)
   }
 
   @available(macOS 26.0, *)

@@ -1,5 +1,16 @@
 import Foundation
 
+assert(
+  qwenCommandArguments(
+    modelURL: URL(fileURLWithPath: "/models/qwen.gguf"),
+    audioURL: URL(fileURLWithPath: "/tmp/sample.wav")
+  ) == [
+    "--backend", "qwen3", "-m", "/models/qwen.gguf", "-f", "/tmp/sample.wav",
+    "-np", "-nt", "-l", "auto", "--lid-backend", "off",
+  ]
+)
+assert(cleanedQwenOutput("  最后一句没有缺少。\n") == "最后一句没有缺少。")
+
 private struct DictationCase {
   let name: String
   let input: String
