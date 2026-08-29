@@ -114,6 +114,11 @@ var speechResults = SpeechResultAccumulator()
 assert(speechResults.accept(text: "西红柿", isFinal: false) == nil)
 assert(speechResults.accept(text: "", isFinal: true) == "西红柿")
 
+var longSpeechResults = SpeechResultAccumulator()
+let completePartial = "第一段记录项目背景和目标 第二段确认关键数字是二十五 第三段整理后续行动"
+assert(longSpeechResults.accept(text: completePartial, isFinal: false) == nil)
+assert(longSpeechResults.accept(text: "第三段整理后续行动", isFinal: true) == completePartial)
+
 var calendar = Calendar(identifier: .gregorian)
 calendar.timeZone = TimeZone(secondsFromGMT: 0)!
 let now = Date(timeIntervalSince1970: 1_700_000_000)

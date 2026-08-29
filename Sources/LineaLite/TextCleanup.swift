@@ -283,13 +283,13 @@ private func splitSentences(_ text: String) -> [String] {
 }
 
 struct SpeechResultAccumulator {
-  private var latestNonEmpty = ""
+  private var longestNonEmpty = ""
 
   mutating func accept(text: String, isFinal: Bool) -> String? {
     let cleaned = cleanedTranscript(text)
-    if !cleaned.isEmpty {
-      latestNonEmpty = cleaned
+    if cleaned.count >= longestNonEmpty.count {
+      longestNonEmpty = cleaned
     }
-    return isFinal ? latestNonEmpty : nil
+    return isFinal ? longestNonEmpty : nil
   }
 }
