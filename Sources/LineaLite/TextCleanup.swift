@@ -18,6 +18,9 @@ private let inlineListMarkerExpression = try! NSRegularExpression(
 private let spokenListMarkerExpression = try! NSRegularExpression(
   pattern: #"(?:^|[\s：:,，；;。.!！？?])((?:第)?([一二两三四五六七八九十]|[1-9][0-9]*)点是)[，,。.!！？?：:\s]*"#
 )
+private let compactThreeItemListExpression = try! NSRegularExpression(
+  pattern: #"^(.*?有\s*(?:三|3)(?:种|个|项|点|条|类|份|组|步|方面|段)?)[：:.．]?\s*(?:一|1)[、.．)]?\s*(.+?)(?:二|2)[、.．)]?\s*(.+?)(?:三|3)[、.．)]?\s*(.+?)[。.!！？?]?$"#
+)
 private let paragraphCues = ["后续的话", "另外的话", "另一方面", "接下来", "另外", "最后"]
 private let sentenceEndings: Set<Character> = ["。", "！", "？", ".", "!", "?"]
 private let listTrimCharacters = CharacterSet.whitespacesAndNewlines.union(
@@ -26,6 +29,9 @@ private let listTrimCharacters = CharacterSet.whitespacesAndNewlines.union(
 private let chineseNumbers = [
   "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
   "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+]
+private let measurementUnitInitials: Set<Character> = [
+  "米", "厘", "元", "斤", "克", "秒", "分", "时", "年", "月", "日", "岁", "层", "楼", "度",
 ]
 
 func cleanedTranscript(_ value: String) -> String {
@@ -53,7 +59,27 @@ func paragraphFormattingAllowed(appName: String?) -> Bool {
 }
 
 private func formattedExplicitList(_ text: String) -> String? {
-  formattedInlineList(text) ?? formattedSpokenList(text)
+  formattedInlineList(text) ?? formattedSpokenList(text) ?? formattedCompactThreeItemList(text)
+}
+
+private func formattedCompactThreeItemList(_ text: String) -> String? {
+  guard let match = compactThreeItemListExpression.firstMatch(
+    in: text,
+    range: NSRange(text.startIndex..., in: text)
+  ) else { return nil }
+
+  let parts = (1...4).compactMap { index -> String? in
+    guard let range = Range(match.range(at: index), in: text) else { return nil }
+    return String(text[range]).trimmingCharacters(in: listTrimCharacters)
+  }
+  let itemInitials = parts.dropFirst().compactMap(\.first)
+  guard parts.count == 4,
+        parts.allSatisfy({ !$0.isEmpty }),
+        !itemInitials.allSatisfy(measurementUnitInitials.contains) else { return nil }
+
+  return parts[0] + "：\n" + parts.dropFirst().enumerated()
+    .map { "\($0.offset + 1). \($0.element)" }
+    .joined(separator: "\n")
 }
 
 private func formattedInlineList(_ text: String) -> String? {

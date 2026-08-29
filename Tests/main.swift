@@ -38,6 +38,11 @@ private let commonDictationCases = [
     expected: "我有三点：\n1. 第一点是，速度\n2. 第二点是，稳定性\n3. 第三点是，兼容性"
   ),
   DictationCase(
+    name: "紧凑口述分点",
+    input: "二三下面有3.1苹果二头三西瓜。",
+    expected: "二三下面有3：\n1. 苹果\n2. 头\n3. 西瓜"
+  ),
+  DictationCase(
     name: "技术内容保护",
     input: "请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs 然后连接 127.0.0.1 端口",
     expected: "请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs，然后连接 127.0.0.1 端口。"
@@ -46,6 +51,16 @@ private let commonDictationCases = [
     name: "分点误判保护",
     input: "我有三只猫 今天天气很好",
     expected: "我有三只猫 今天天气很好。"
+  ),
+  DictationCase(
+    name: "小数误判保护",
+    input: "房间有3.1米宽二米高三米长。",
+    expected: "房间有3.1米宽二米高三米长。"
+  ),
+  DictationCase(
+    name: "同字开头分点",
+    input: "下面有3.1苹果二苹果汁三苹果酱。",
+    expected: "下面有3：\n1. 苹果\n2. 苹果汁\n3. 苹果酱"
   ),
 ]
 
