@@ -206,21 +206,25 @@ private final class DictationEngine {
   }
 }
 
-private final class AppDelegate: NSObject, NSApplicationDelegate {
+private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let engine = DictationEngine()
+  private let history = HistoryStore()
+  private let historyView = HistoryMenuView()
   private let hud = CaptureHUD()
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private var hotKey: PushToTalkKey?
   private var accessibilityTimer: Timer?
   private var levelTimer: Timer?
+  private var targetAppName: String?
   private var isStarting = false
   private var status = "Hold Right Option to dictate"
-  private var recordings = 0
-  private var seconds: TimeInterval = 0
-  private var characters = 0
 
   private let statusMenuItem = NSMenuItem()
-  private let statsMenuItem = NSMenuItem()
+  private let clearHistoryMenuItem = NSMenuItem(
+    title: "Clear History...",
+    action: #selector(clearHistory(_:)),
+    keyEquivalent: ""
+  )
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
@@ -235,20 +239,34 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func buildMenu() {
     let menu = NSMenu()
+    menu.autoenablesItems = false
+    let historyMenuItem = NSMenuItem()
+    historyView.frame.size = historyView.intrinsicContentSize
+    historyMenuItem.view = historyView
+    menu.addItem(historyMenuItem)
+    menu.addItem(NSMenuItem.separator())
     statusMenuItem.isEnabled = false
-    statsMenuItem.isEnabled = false
     menu.addItem(statusMenuItem)
-    menu.addItem(statsMenuItem)
+    let shortcutMenuItem = NSMenuItem(title: "Shortcut: hold Right Option", action: nil, keyEquivalent: "")
+    shortcutMenuItem.isEnabled = false
+    menu.addItem(shortcutMenuItem)
     menu.addItem(NSMenuItem.separator())
-    menu.addItem(NSMenuItem(title: "Shortcut: hold Right Option", action: nil, keyEquivalent: ""))
-    menu.addItem(NSMenuItem.separator())
+    clearHistoryMenuItem.target = self
+    menu.addItem(clearHistoryMenuItem)
     menu.addItem(NSMenuItem(title: "Quit Linea Lite", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q"))
+    menu.delegate = self
     statusItem.menu = menu
+    refreshMenu()
+  }
+
+  func menuWillOpen(_ menu: NSMenu) {
+    refreshMenu()
   }
 
   private func startDictation() {
     guard !engine.isRecording, !isStarting else { return }
     isStarting = true
+    targetAppName = NSWorkspace.shared.frontmostApplication?.localizedName
     hud.showRecording()
     status = "Requesting permission..."
     refreshMenu()
@@ -257,12 +275,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
       guard let self else { return }
       self.isStarting = false
       guard allowed else {
+        self.targetAppName = nil
         self.status = "Microphone or speech permission denied"
         self.hud.showError()
         self.refreshMenu()
         return
       }
       guard self.hotKey?.isPressed == true else {
+        self.targetAppName = nil
         self.status = "Hold Right Option to dictate"
         self.hud.hide()
         self.refreshMenu()
@@ -274,6 +294,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         self.status = "Recording..."
         self.startLevelUpdates()
       } catch {
+        self.targetAppName = nil
         self.status = error.localizedDescription
         self.hud.showError()
       }
@@ -296,6 +317,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     engine.stopAndTranscribe { [weak self] result in
       DispatchQueue.main.async {
         guard let self else { return }
+        let appName = self.targetAppName
+        self.targetAppName = nil
 
         switch result {
         case .success((let text, let duration)):
@@ -305,11 +328,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             self.refreshMenu()
             return
           }
-          self.recordings += 1
-          self.seconds += duration
-          self.characters += text.count
-          self.insertAtCursor(text)
-          self.status = "Inserted \(text.count) chars"
+          let inserted = self.insertAtCursor(text)
+          let saved = self.history.append(HistoryEntry(
+            text: text,
+            duration: duration,
+            appName: appName
+          ))
+          if !saved {
+            self.status = inserted ? "Inserted; history was not saved" : "Copied; history was not saved"
+          } else {
+            self.status = inserted ? "Inserted \(text.count) chars" : "Copied; enable Accessibility to auto-insert"
+          }
           self.hud.showComplete()
         case .failure(let error):
           self.status = error.localizedDescription
@@ -320,15 +349,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  private func insertAtCursor(_ text: String) {
+  private func insertAtCursor(_ text: String) -> Bool {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
     pasteboard.setString(text, forType: .string)
 
     guard AXIsProcessTrusted() else {
       requestAccessibility()
-      status = "Copied; enable Accessibility to auto-insert"
-      return
+      return false
     }
 
     let source = CGEventSource(stateID: .hidSystemState)
@@ -338,6 +366,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     up?.flags = .maskCommand
     down?.post(tap: .cghidEventTap)
     up?.post(tap: .cghidEventTap)
+    return true
+  }
+
+  @objc private func clearHistory(_ sender: Any?) {
+    let alert = NSAlert()
+    alert.messageText = "Clear local history?"
+    alert.informativeText = "This removes transcript text and activity statistics from this Mac."
+    alert.addButton(withTitle: "Clear")
+    alert.addButton(withTitle: "Cancel")
+    NSApp.activate(ignoringOtherApps: true)
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+    status = history.clear() ? "History cleared" : "Could not clear history"
+    refreshMenu()
   }
 
   private func requestAccessibility() {
@@ -384,9 +426,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func refreshMenu() {
-    statusItem.button?.title = hotKey?.isPressed == true ? "● Linea" : "Linea \(recordings)"
+    statusItem.button?.title = hotKey?.isPressed == true ? "● Linea" : "Linea \(history.entries.count)"
     statusMenuItem.title = status
-    statsMenuItem.title = "\(recordings) clips · \(Int(seconds))s · \(characters) chars"
+    clearHistoryMenuItem.isEnabled = !history.entries.isEmpty
+    historyView.update(entries: history.entries)
   }
 }
 

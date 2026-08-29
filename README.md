@@ -11,12 +11,12 @@ Included:
 - Push-to-talk dictation by holding the right `Option` key.
 - Linea-style floating waveform while recording and processing.
 - Paste into the current cursor location.
-- Session stats in the menu bar.
+- Local transcript history and a 16-week activity graph in the menu bar.
 
 Not included:
 
 - Accounts, activation codes, payments, telemetry, updater, or server APIs.
-- Bundled ASR models, Python sidecars, benchmarks, history database, or agents.
+- Bundled ASR models, Python sidecars, benchmarks, audio archive, or agents.
 - Remote mic, cloud correction, vocabulary packs, windows, editors, or insight pages.
 
 ## Requirements
@@ -45,6 +45,7 @@ make run
 macOS will ask for microphone and speech-recognition permission on first use.
 The app intentionally does not fall back to cloud recognition.
 Accessibility permission is needed for right-Option detection and automatic paste. Once it is enabled, Linea starts listening without a restart.
+Transcript text, time, duration, and target-app name are stored locally in `~/Library/Application Support/Linea Lite/history.json`.
 
 ## Test
 
