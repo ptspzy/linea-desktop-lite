@@ -9,8 +9,24 @@ private let punctuationSpacingExpression = try! NSRegularExpression(
 private let connectorExpression = try! NSRegularExpression(
   pattern: #"(?<![，。！？；：,.!?;:])\s+(然后|但是|不过|所以|而且|同时|接着|因此)\s*"#
 )
+private let declaredListCountExpression = try! NSRegularExpression(
+  pattern: #"([二两三四五六七八九十]|[2-9][0-9]*)\s*(?:种|个|项|点|条|类|份|组|步|方面|段)"#
+)
+private let inlineListMarkerExpression = try! NSRegularExpression(
+  pattern: #"(?:^|[\s：:,，；;。.!！？?])([一二两三四五六七八九十]|[1-9][0-9]*)(?:[、.．)]?)\s*"#
+)
+private let spokenListMarkerExpression = try! NSRegularExpression(
+  pattern: #"(?:^|[\s：:,，；;。.!！？?])((?:第)?([一二两三四五六七八九十]|[1-9][0-9]*)点是)[，,。.!！？?：:\s]*"#
+)
 private let paragraphCues = ["后续的话", "另外的话", "另一方面", "接下来", "另外", "最后"]
 private let sentenceEndings: Set<Character> = ["。", "！", "？", ".", "!", "?"]
+private let listTrimCharacters = CharacterSet.whitespacesAndNewlines.union(
+  CharacterSet(charactersIn: "，,；;。.!！？?：:、")
+)
+private let chineseNumbers = [
+  "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+  "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+]
 
 func cleanedTranscript(_ value: String) -> String {
   value
@@ -22,6 +38,7 @@ func cleanedTranscript(_ value: String) -> String {
 func formattedTranscript(_ value: String, paragraphBreaks: Bool = true) -> String {
   let cleaned = normalizedPunctuationSpacing(cleanedTranscript(value))
   guard !cleaned.isEmpty else { return "" }
+  if paragraphBreaks, let list = formattedExplicitList(cleaned) { return list }
 
   let sections = strongParagraphSections(cleaned)
   let formatted = sections
@@ -33,6 +50,93 @@ func formattedTranscript(_ value: String, paragraphBreaks: Bool = true) -> Strin
 func paragraphFormattingAllowed(appName: String?) -> Bool {
   guard let name = appName?.lowercased() else { return true }
   return !["terminal", "iterm2", "warp", "alacritty", "kitty", "wezterm"].contains(name)
+}
+
+private func formattedExplicitList(_ text: String) -> String? {
+  formattedInlineList(text) ?? formattedSpokenList(text)
+}
+
+private func formattedInlineList(_ text: String) -> String? {
+  let fullRange = NSRange(text.startIndex..., in: text)
+  let matches = inlineListMarkerExpression.matches(in: text, range: fullRange)
+  guard matches.count >= 2,
+        let firstRange = Range(matches[0].range, in: text) else { return nil }
+
+  let heading = String(text[..<firstRange.lowerBound])
+    .trimmingCharacters(in: listTrimCharacters)
+  guard !heading.isEmpty,
+        declaredListCount(in: heading) == matches.count else { return nil }
+
+  let values = matches.compactMap { match -> Int? in
+    guard let range = Range(match.range(at: 1), in: text) else { return nil }
+    return numberValue(String(text[range]))
+  }
+  guard values == Array(1...matches.count) else { return nil }
+
+  var items: [String] = []
+  for (index, match) in matches.enumerated() {
+    guard let markerRange = Range(match.range, in: text) else { return nil }
+    let itemEnd = index + 1 < matches.count
+      ? Range(matches[index + 1].range, in: text)!.lowerBound
+      : text.endIndex
+    let item = String(text[markerRange.upperBound..<itemEnd])
+      .trimmingCharacters(in: listTrimCharacters)
+    guard !item.isEmpty else { return nil }
+    items.append(item)
+  }
+
+  return heading + "：\n" + items.enumerated()
+    .map { "\($0.offset + 1). \($0.element)" }
+    .joined(separator: "\n")
+}
+
+private func formattedSpokenList(_ text: String) -> String? {
+  let matches = spokenListMarkerExpression.matches(
+    in: text,
+    range: NSRange(text.startIndex..., in: text)
+  )
+  guard matches.count >= 2,
+        let firstRange = Range(matches[0].range, in: text) else { return nil }
+
+  let heading = String(text[..<firstRange.lowerBound])
+    .trimmingCharacters(in: listTrimCharacters)
+  guard !heading.isEmpty,
+        declaredListCount(in: heading) == matches.count else { return nil }
+
+  let values = matches.compactMap { match -> Int? in
+    guard let range = Range(match.range(at: 2), in: text) else { return nil }
+    return numberValue(String(text[range]))
+  }
+  guard values == Array(1...matches.count) else { return nil }
+
+  var items: [String] = []
+  for (index, match) in matches.enumerated() {
+    guard let markerRange = Range(match.range(at: 1), in: text),
+          let fullMarkerRange = Range(match.range, in: text) else { return nil }
+    let itemEnd = index + 1 < matches.count
+      ? Range(matches[index + 1].range, in: text)!.lowerBound
+      : text.endIndex
+    let body = String(text[fullMarkerRange.upperBound..<itemEnd])
+      .trimmingCharacters(in: listTrimCharacters)
+    guard !body.isEmpty else { return nil }
+    items.append("\(text[markerRange])，\(body)")
+  }
+
+  return heading + "：\n" + items.enumerated()
+    .map { "\($0.offset + 1). \($0.element)" }
+    .joined(separator: "\n")
+}
+
+private func declaredListCount(in text: String) -> Int? {
+  guard let match = declaredListCountExpression.firstMatch(
+    in: text,
+    range: NSRange(text.startIndex..., in: text)
+  ), let range = Range(match.range(at: 1), in: text) else { return nil }
+  return numberValue(String(text[range]))
+}
+
+private func numberValue(_ value: String) -> Int? {
+  Int(value) ?? chineseNumbers[value]
 }
 
 private func normalizedPunctuationSpacing(_ text: String) -> String {
