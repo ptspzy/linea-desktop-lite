@@ -172,16 +172,21 @@ private final class DictationEngine {
 
     isTranscribing = true
     var didFinish = false
+    var transcripts = SpeechResultAccumulator()
     let request = SFSpeechURLRecognitionRequest(url: url)
     request.requiresOnDeviceRecognition = true
 
     task = recognizer.recognitionTask(with: request) { [weak self] result, error in
       guard let self, !didFinish else { return }
 
-      if let result, result.isFinal {
+      if let result,
+         let text = transcripts.accept(
+           text: result.bestTranscription.formattedString,
+           isFinal: result.isFinal
+         ) {
         didFinish = true
         self.finish(url: url)
-        completion(.success((cleanedTranscript(result.bestTranscription.formattedString), duration)))
+        completion(.success((text, duration)))
       } else if let error {
         didFinish = true
         self.finish(url: url)
