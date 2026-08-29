@@ -53,9 +53,12 @@ private final class PushToTalkKey {
   }
 
   private func handle(_ event: NSEvent) {
-    let pressed = event.modifierFlags
-      .intersection(.deviceIndependentFlagsMask)
-      .contains(.control)
+    guard let pressed = rightOptionPressed(
+      keyCode: event.keyCode,
+      optionPressed: event.modifierFlags
+        .intersection(.deviceIndependentFlagsMask)
+        .contains(.option)
+    ) else { return }
     DispatchQueue.main.async { [weak self] in
       self?.handle(pressed)
     }
@@ -211,7 +214,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
   private var accessibilityTimer: Timer?
   private var levelTimer: Timer?
   private var isStarting = false
-  private var status = "Hold Control to dictate"
+  private var status = "Hold Right Option to dictate"
   private var recordings = 0
   private var seconds: TimeInterval = 0
   private var characters = 0
@@ -237,7 +240,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     menu.addItem(statusMenuItem)
     menu.addItem(statsMenuItem)
     menu.addItem(NSMenuItem.separator())
-    menu.addItem(NSMenuItem(title: "Shortcut: hold Control", action: nil, keyEquivalent: ""))
+    menu.addItem(NSMenuItem(title: "Shortcut: hold Right Option", action: nil, keyEquivalent: ""))
     menu.addItem(NSMenuItem.separator())
     menu.addItem(NSMenuItem(title: "Quit Linea Lite", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q"))
     statusItem.menu = menu
@@ -260,7 +263,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         return
       }
       guard self.hotKey?.isPressed == true else {
-        self.status = "Hold Control to dictate"
+        self.status = "Hold Right Option to dictate"
         self.hud.hide()
         self.refreshMenu()
         return
@@ -281,7 +284,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
   private func finishDictation() {
     guard engine.isRecording else {
       hud.hide()
-      status = "Hold Control to dictate"
+      status = "Hold Right Option to dictate"
       refreshMenu()
       return
     }
@@ -348,7 +351,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
-    status = "Enable Accessibility to use Control"
+    status = "Enable Accessibility to use Right Option"
     refreshMenu()
     requestAccessibility()
     accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
@@ -361,7 +364,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
   private func enableHotKey() {
     accessibilityTimer = nil
     hotKey?.register()
-    status = "Hold Control to dictate"
+    status = "Hold Right Option to dictate"
     refreshMenu()
   }
 

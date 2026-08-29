@@ -11,6 +11,10 @@ assert(pushToTalk.transition(to: true) == nil)
 assert(pushToTalk.transition(to: false) == .released)
 assert(!pushToTalk.isPressed)
 
+assert(rightOptionPressed(keyCode: 58, optionPressed: true) == nil)
+assert(rightOptionPressed(keyCode: 61, optionPressed: true) == true)
+assert(rightOptionPressed(keyCode: 61, optionPressed: false) == false)
+
 assert(captureAudioLevel(decibels: -160) == 0)
 assert((0.50...0.55).contains(captureAudioLevel(decibels: -20)))
 assert(captureAudioLevel(decibels: 0) == 1)

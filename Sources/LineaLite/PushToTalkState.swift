@@ -3,6 +3,10 @@ enum PushToTalkTransition {
   case released
 }
 
+func rightOptionPressed(keyCode: UInt16, optionPressed: Bool) -> Bool? {
+  keyCode == 61 ? optionPressed : nil
+}
+
 struct PushToTalkState {
   private(set) var isPressed = false
 

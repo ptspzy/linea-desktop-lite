@@ -8,7 +8,7 @@ Included:
 
 - Native macOS microphone capture.
 - Native macOS on-device speech recognition for zh-CN.
-- Push-to-talk dictation by holding `Control`.
+- Push-to-talk dictation by holding the right `Option` key.
 - Linea-style floating waveform while recording and processing.
 - Paste into the current cursor location.
 - Session stats in the menu bar.
@@ -44,7 +44,7 @@ make run
 
 macOS will ask for microphone and speech-recognition permission on first use.
 The app intentionally does not fall back to cloud recognition.
-Accessibility permission is needed for Control-key detection and automatic paste. Once it is enabled, Linea starts listening without a restart.
+Accessibility permission is needed for right-Option detection and automatic paste. Once it is enabled, Linea starts listening without a restart.
 
 ## Test
 
