@@ -1,9 +1,66 @@
 import Foundation
 
+private struct DictationCase {
+  let name: String
+  let input: String
+  let expected: String
+}
+
+private let commonDictationCases = [
+  DictationCase(
+    name: "普通陈述",
+    input: "今天下午三点我们在会议室讨论发布计划",
+    expected: "今天下午三点我们在会议室讨论发布计划。"
+  ),
+  DictationCase(
+    name: "短问句",
+    input: "这个版本今天能发布吗",
+    expected: "这个版本今天能发布吗？"
+  ),
+  DictationCase(
+    name: "三段落",
+    input: "当前先完成配置和本地测试 后续的话 再进行录音验证和发布检查 最后整理结果并确认功能稳定",
+    expected: "当前先完成配置和本地测试。\n\n后续的话，再进行录音验证和发布检查。\n\n最后整理结果并确认功能稳定。"
+  ),
+  DictationCase(
+    name: "阿拉伯数字分点",
+    input: "支持三个环境：1开发，2测试，3生产。",
+    expected: "支持三个环境：\n1. 开发\n2. 测试\n3. 生产"
+  ),
+  DictationCase(
+    name: "中文数字分点",
+    input: "可以吃三种食物 一苹果 二香蕉 三西瓜",
+    expected: "可以吃三种食物：\n1. 苹果\n2. 香蕉\n3. 西瓜"
+  ),
+  DictationCase(
+    name: "口述顺序分点",
+    input: "我有三点 第一点是速度 第二点是稳定性 第三点是兼容性",
+    expected: "我有三点：\n1. 第一点是，速度\n2. 第二点是，稳定性\n3. 第三点是，兼容性"
+  ),
+  DictationCase(
+    name: "技术内容保护",
+    input: "请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs 然后连接 127.0.0.1 端口",
+    expected: "请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs，然后连接 127.0.0.1 端口。"
+  ),
+  DictationCase(
+    name: "分点误判保护",
+    input: "我有三只猫 今天天气很好",
+    expected: "我有三只猫 今天天气很好。"
+  ),
+]
+
+for testCase in commonDictationCases {
+  let actual = formattedTranscript(testCase.input)
+  guard actual == testCase.expected else {
+    fputs("FAILED: \(testCase.name)\nexpected: \(testCase.expected)\nactual:   \(actual)\n", stderr)
+    exit(1)
+  }
+  print("PASS: \(testCase.name)")
+}
+
 assert(cleanedTranscript("  hello\n\nworld  ") == "hello world")
 assert(cleanedTranscript("Linea   Lite") == "Linea Lite")
 assert(cleanedTranscript("") == "")
-assert(formattedTranscript("这个功能现在能用吗") == "这个功能现在能用吗？")
 assert(formattedTranscript("这个功能现在能用吗，") == "这个功能现在能用吗？")
 assert(formattedTranscript("西红柿") == "西红柿")
 assert(
@@ -20,27 +77,6 @@ assert(
     paragraphBreaks: false
   ) == "当前先完成配置和本地测试。后续的话，再进行真实录音验证和发布检查。"
 )
-assert(
-  formattedTranscript("请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs 然后连接 127.0.0.1 端口")
-    == "请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs，然后连接 127.0.0.1 端口。"
-)
-assert(
-  formattedTranscript("当前先完成配置和本地测试 后续的话 再进行录音验证和发布检查 最后整理结果并确认功能稳定")
-    == "当前先完成配置和本地测试。\n\n后续的话，再进行录音验证和发布检查。\n\n最后整理结果并确认功能稳定。"
-)
-assert(
-  formattedTranscript("支持三个环境：1开发，2测试，3生产。")
-    == "支持三个环境：\n1. 开发\n2. 测试\n3. 生产"
-)
-assert(
-  formattedTranscript("可以吃三种食物 一苹果 二香蕉 三西瓜")
-    == "可以吃三种食物：\n1. 苹果\n2. 香蕉\n3. 西瓜"
-)
-assert(
-  formattedTranscript("我有三点 第一点是速度 第二点是稳定性 第三点是兼容性")
-    == "我有三点：\n1. 第一点是，速度\n2. 第二点是，稳定性\n3. 第三点是，兼容性"
-)
-assert(formattedTranscript("我有三只猫 今天天气很好") == "我有三只猫 今天天气很好。")
 let longDictation = "第一部分主要说明当前项目的背景、目标和限制，并确认所有内容都在本地处理。"
   + "第二部分会检查语音识别、自动标点和历史记录在完整流程中是否保持一致。"
   + "第三部分开始验证较长文本在不同工作应用中的段落结构、阅读节奏和内容保护。"
