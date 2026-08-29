@@ -8,6 +8,7 @@ Included:
 
 - Native macOS microphone capture.
 - Native macOS on-device speech recognition for zh-CN.
+- Native automatic punctuation and local format-only paragraphing.
 - Push-to-talk dictation by holding the right `Option` key.
 - Linea-style floating waveform while recording and processing.
 - Paste into the current cursor location.

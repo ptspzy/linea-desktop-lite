@@ -3,6 +3,44 @@ import Foundation
 assert(cleanedTranscript("  hello\n\nworld  ") == "hello world")
 assert(cleanedTranscript("Linea   Lite") == "Linea Lite")
 assert(cleanedTranscript("") == "")
+assert(formattedTranscript("这个功能现在能用吗") == "这个功能现在能用吗？")
+assert(formattedTranscript("这个功能现在能用吗，") == "这个功能现在能用吗？")
+assert(formattedTranscript("西红柿") == "西红柿")
+assert(
+  formattedTranscript("当前先完成配置和本地测试 后续的话 再进行真实录音验证和发布检查")
+    == "当前先完成配置和本地测试。\n\n后续的话，再进行真实录音验证和发布检查。"
+)
+assert(
+  formattedTranscript("当前先完成配置和本地测试， 后续的话，再进行真实录音验证和发布检查。")
+    == "当前先完成配置和本地测试。\n\n后续的话，再进行真实录音验证和发布检查。"
+)
+assert(
+  formattedTranscript(
+    "当前先完成配置和本地测试 后续的话 再进行真实录音验证和发布检查",
+    paragraphBreaks: false
+  ) == "当前先完成配置和本地测试。后续的话，再进行真实录音验证和发布检查。"
+)
+assert(
+  formattedTranscript("请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs 然后连接 127.0.0.1 端口")
+    == "请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs，然后连接 127.0.0.1 端口。"
+)
+let longDictation = "第一部分主要说明当前项目的背景、目标和限制，并确认所有内容都在本地处理。"
+  + "第二部分会检查语音识别、自动标点和历史记录在完整流程中是否保持一致。"
+  + "第三部分开始验证较长文本在不同工作应用中的段落结构、阅读节奏和内容保护。"
+  + "第四部分继续确认技术名词、版本号和文件路径不会因为格式处理发生变化。"
+  + "最后一部分整理测试结果，并在确认没有内容被改写之后完成本地发布。"
+let formattedLongDictation = formattedTranscript(longDictation)
+assert(
+  formattedLongDictation
+    == "第一部分主要说明当前项目的背景、目标和限制，并确认所有内容都在本地处理。"
+      + "第二部分会检查语音识别、自动标点和历史记录在完整流程中是否保持一致。\n\n"
+      + "第三部分开始验证较长文本在不同工作应用中的段落结构、阅读节奏和内容保护。"
+      + "第四部分继续确认技术名词、版本号和文件路径不会因为格式处理发生变化。\n\n"
+      + "最后一部分整理测试结果，并在确认没有内容被改写之后完成本地发布。"
+)
+assert(!paragraphFormattingAllowed(appName: "Terminal"))
+assert(!paragraphFormattingAllowed(appName: "iTerm2"))
+assert(paragraphFormattingAllowed(appName: "TextEdit"))
 
 var pushToTalk = PushToTalkState()
 assert(pushToTalk.transition(to: true) == .pressed)

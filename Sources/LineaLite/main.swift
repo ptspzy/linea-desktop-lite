@@ -178,6 +178,9 @@ private final class DictationEngine {
     var transcripts = SpeechResultAccumulator()
     let request = SFSpeechURLRecognitionRequest(url: url)
     request.requiresOnDeviceRecognition = true
+    request.addsPunctuation = true
+    request.shouldReportPartialResults = true
+    request.taskHint = .dictation
 
     task = recognizer.recognitionTask(with: request) { [weak self] result, error in
       guard let self, !didFinish else { return }
@@ -321,7 +324,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         self.targetAppName = nil
 
         switch result {
-        case .success((let text, let duration)):
+        case .success((let transcript, let duration)):
+          let text = formattedTranscript(
+            transcript,
+            paragraphBreaks: paragraphFormattingAllowed(appName: appName)
+          )
           guard !text.isEmpty else {
             self.status = "No speech detected"
             self.hud.showError()
