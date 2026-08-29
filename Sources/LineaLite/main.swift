@@ -85,6 +85,7 @@ private final class PushToTalkKey {
   }
 }
 
+@MainActor
 private final class DictationEngine {
   private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
   private var recorder: AVAudioRecorder?
@@ -168,12 +169,60 @@ private final class DictationEngine {
     duration: TimeInterval,
     _ completion: @escaping (Result<(String, TimeInterval), Error>) -> Void
   ) {
+    isTranscribing = true
+    if #available(macOS 26.0, *) {
+      Task { [weak self] in
+        guard let self else { return }
+        do {
+          let text = try await self.transcribeWithSpeechAnalyzer(url: url)
+          self.finish(url: url)
+          completion(.success((text, duration)))
+        } catch {
+          self.transcribeWithLegacyRecognizer(url: url, duration: duration, completion)
+        }
+      }
+      return
+    }
+    transcribeWithLegacyRecognizer(url: url, duration: duration, completion)
+  }
+
+  @available(macOS 26.0, *)
+  private func transcribeWithSpeechAnalyzer(url: URL) async throws -> String {
+    let transcriber = SpeechTranscriber(
+      locale: Locale(identifier: "zh-CN"),
+      preset: .transcription
+    )
+    if await AssetInventory.status(forModules: [transcriber]) != .installed {
+      guard let request = try await AssetInventory.assetInstallationRequest(
+        supporting: [transcriber]
+      ) else { throw DictationError.noOnDeviceRecognition }
+      try await request.downloadAndInstall()
+    }
+
+    async let transcript = transcriber.results.reduce("") { partial, result in
+      partial + String(result.text.characters)
+    }
+    let file = try AVAudioFile(forReading: url)
+    let analyzer = SpeechAnalyzer(modules: [transcriber])
+    if let lastSample = try await analyzer.analyzeSequence(from: file) {
+      try await analyzer.finalizeAndFinish(through: lastSample)
+    } else {
+      await analyzer.cancelAndFinishNow()
+    }
+    return try await transcript
+  }
+
+  private func transcribeWithLegacyRecognizer(
+    url: URL,
+    duration: TimeInterval,
+    _ completion: @escaping (Result<(String, TimeInterval), Error>) -> Void
+  ) {
     guard let recognizer else {
+      finish(url: url)
       completion(.failure(DictationError.notAvailable))
       return
     }
 
-    isTranscribing = true
     var didFinish = false
     var transcripts = SpeechResultAccumulator()
     let request = SFSpeechURLRecognitionRequest(url: url)
@@ -209,6 +258,7 @@ private final class DictationEngine {
   }
 }
 
+@MainActor
 private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let engine = DictationEngine()
   private let history = HistoryStore()
@@ -406,7 +456,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
       guard AXIsProcessTrusted() else { return }
       timer.invalidate()
-      self?.enableHotKey()
+      MainActor.assumeIsolated {
+        self?.enableHotKey()
+      }
     }
   }
 
@@ -420,8 +472,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private func startLevelUpdates() {
     stopLevelUpdates()
     let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
-      guard let self else { return }
-      self.hud.setLevel(self.engine.audioLevel)
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        self.hud.setLevel(self.engine.audioLevel)
+      }
     }
     levelTimer = timer
     RunLoop.main.add(timer, forMode: .common)
@@ -440,7 +494,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 }
 
-let app = NSApplication.shared
-private let delegate = AppDelegate()
-app.delegate = delegate
-app.run()
+MainActor.assumeIsolated {
+  let app = NSApplication.shared
+  let delegate = AppDelegate()
+  app.delegate = delegate
+  app.run()
+}
