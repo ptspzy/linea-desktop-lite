@@ -313,9 +313,35 @@ struct SpeechResultAccumulator {
 
   mutating func accept(text: String, isFinal: Bool) -> String? {
     let cleaned = cleanedTranscript(text)
-    if cleaned.count >= longestNonEmpty.count {
+    if !isFinal, cleaned.count >= longestNonEmpty.count {
       longestNonEmpty = cleaned
     }
-    return isFinal ? longestNonEmpty : nil
+    guard isFinal else { return nil }
+    guard !cleaned.isEmpty else { return longestNonEmpty }
+    guard !longestNonEmpty.isEmpty else { return cleaned }
+    if cleaned.contains(longestNonEmpty) { return cleaned }
+    guard !longestNonEmpty.contains(cleaned) else { return longestNonEmpty }
+    if let merged = mergedTranscript(prefix: longestNonEmpty, suffix: cleaned) {
+      return merged
+    }
+    // ponytail: A sharply shorter final result is treated as a new tail; chunk audio if partials also omit speech.
+    if cleaned.count * 2 <= longestNonEmpty.count {
+      return longestNonEmpty + " " + cleaned
+    }
+    return cleaned.count >= longestNonEmpty.count ? cleaned : longestNonEmpty
   }
+}
+
+private func mergedTranscript(prefix: String, suffix: String) -> String? {
+  let maximum = min(prefix.count, suffix.count)
+  guard maximum >= 2 else { return nil }
+
+  for length in stride(from: maximum, through: 2, by: -1) {
+    let prefixStart = prefix.index(prefix.endIndex, offsetBy: -length)
+    let suffixEnd = suffix.index(suffix.startIndex, offsetBy: length)
+    if prefix[prefixStart...] == suffix[..<suffixEnd] {
+      return prefix + String(suffix[suffixEnd...])
+    }
+  }
+  return nil
 }
