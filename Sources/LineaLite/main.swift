@@ -195,7 +195,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private var levelTimer: Timer?
   private var targetAppName: String?
   private var isStarting = false
-  private var status = "Hold Right Option to dictate"
+  private var shortcut = DictationShortcutState()
+  private var status = "Tap or hold Right Option to dictate"
 
   private let statusMenuItem = NSMenuItem()
   private let clearHistoryMenuItem = NSMenuItem(
@@ -209,8 +210,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     buildMenu()
 
     hotKey = PushToTalkKey(
-      onPress: { [weak self] in self?.startDictation() },
-      onRelease: { [weak self] in self?.finishDictation() }
+      onPress: { [weak self] in self?.handleShortcutPress() },
+      onRelease: { [weak self] in self?.handleShortcutRelease() }
     )
     prepareAccessibility()
   }
@@ -229,7 +230,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     menu.addItem(NSMenuItem.separator())
     statusMenuItem.isEnabled = false
     menu.addItem(statusMenuItem)
-    let shortcutMenuItem = NSMenuItem(title: "Shortcut: hold Right Option", action: nil, keyEquivalent: "")
+    let shortcutMenuItem = NSMenuItem(title: "Right Option: tap or hold", action: nil, keyEquivalent: "")
     shortcutMenuItem.isEnabled = false
     menu.addItem(shortcutMenuItem)
     menu.addItem(NSMenuItem.separator())
@@ -245,6 +246,31 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     refreshMenu()
   }
 
+  private func handleShortcutPress() {
+    switch shortcut.press(at: ProcessInfo.processInfo.systemUptime) {
+    case .start:
+      startDictation()
+    case .stop:
+      finishDictation()
+    case .continueRecording:
+      break
+    }
+  }
+
+  private func handleShortcutRelease() {
+    switch shortcut.release(at: ProcessInfo.processInfo.systemUptime) {
+    case .continueRecording:
+      if engine.isRecording {
+        status = "Recording; tap Right Option to stop"
+        refreshMenu()
+      }
+    case .stop:
+      finishDictation()
+    case .start, nil:
+      break
+    }
+  }
+
   private func startDictation() {
     guard !engine.isRecording, !isStarting else { return }
     isStarting = true
@@ -257,15 +283,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       guard let self else { return }
       self.isStarting = false
       guard allowed else {
+        self.shortcut.reset()
         self.targetAppName = nil
         self.status = "Microphone permission denied"
         self.hud.showError()
         self.refreshMenu()
         return
       }
-      guard self.hotKey?.isPressed == true else {
+      guard self.shortcut.wantsRecording else {
         self.targetAppName = nil
-        self.status = "Hold Right Option to dictate"
+        self.status = "Tap or hold Right Option to dictate"
         self.hud.hide()
         self.refreshMenu()
         return
@@ -273,9 +300,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
       do {
         try self.engine.start()
-        self.status = "Recording..."
+        self.status = self.shortcut.isLatched
+          ? "Recording; tap Right Option to stop"
+          : "Recording..."
         self.startLevelUpdates()
       } catch {
+        self.shortcut.reset()
         self.targetAppName = nil
         self.status = error.localizedDescription
         self.hud.showError()
@@ -285,9 +315,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   private func finishDictation() {
+    shortcut.reset()
     guard engine.isRecording else {
       hud.hide()
-      status = "Hold Right Option to dictate"
+      status = "Tap or hold Right Option to dictate"
       refreshMenu()
       return
     }
@@ -394,7 +425,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private func enableHotKey() {
     accessibilityTimer = nil
     hotKey?.register()
-    status = "Hold Right Option to dictate"
+    status = "Tap or hold Right Option to dictate"
     refreshMenu()
   }
 
@@ -416,7 +447,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   private func refreshMenu() {
-    statusItem.button?.title = hotKey?.isPressed == true ? "● Linea" : "Linea \(history.entries.count)"
+    statusItem.button?.title = shortcut.wantsRecording || engine.isRecording
+      ? "● Linea"
+      : "Linea \(history.entries.count)"
     statusMenuItem.title = status
     clearHistoryMenuItem.isEnabled = !history.entries.isEmpty
     historyView.update(entries: history.entries)

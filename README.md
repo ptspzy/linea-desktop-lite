@@ -9,7 +9,7 @@ Included:
 - Native macOS microphone capture.
 - Qwen3-ASR 0.6B Q4_K local speech recognition for zh-CN.
 - Native automatic punctuation and local format-only paragraph/list formatting.
-- Push-to-talk dictation by holding the right `Option` key.
+- Tap right `Option` to start/stop, or hold it for push-to-talk dictation.
 - Linea-style floating waveform while recording and processing.
 - Paste into the current cursor location.
 - Local transcript history and a 16-week activity graph in the menu bar.
