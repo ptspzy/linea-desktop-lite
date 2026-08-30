@@ -10,6 +10,15 @@ assert(
   ]
 )
 assert(cleanedQwenOutput("  最后一句没有缺少。\n") == "最后一句没有缺少。")
+assert(
+  qwenServerArguments(modelURL: URL(fileURLWithPath: "/models/qwen.gguf"), port: 17_999) == [
+    "--server", "--host", "127.0.0.1", "--port", "17999",
+    "--backend", "qwen3", "-m", "/models/qwen.gguf", "-np", "-nt",
+    "-l", "auto", "--lid-backend", "off", "--ws-port", "-1", "--wyoming-port", "-1",
+  ]
+)
+let serverTranscript = try qwenServerTranscript(#"{"text":"  预热后更快。\n"}"#)
+assert(serverTranscript == "预热后更快。")
 
 do {
   _ = try processOutput(

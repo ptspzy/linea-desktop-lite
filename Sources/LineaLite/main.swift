@@ -129,6 +129,7 @@ private final class DictationEngine {
     self.recorder = recorder
     startedAt = Date()
     audioURL = url
+    Task.detached(priority: .utility) { prepareQwen() }
   }
 
   func stopAndTranscribe(_ completion: @escaping (Result<(String, TimeInterval), Error>) -> Void) {
@@ -140,6 +141,7 @@ private final class DictationEngine {
     let duration = Date().timeIntervalSince(startedAt)
     stopRecording()
     guard let file = try? AVAudioFile(forReading: url), file.length > 0 else {
+      Task.detached(priority: .utility) { stopQwen() }
       finish(url: url)
       completion(.failure(DictationError.noAudio))
       return
@@ -211,6 +213,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       onRelease: { [weak self] in self?.finishDictation() }
     )
     prepareAccessibility()
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    stopQwen()
   }
 
   private func buildMenu() {
