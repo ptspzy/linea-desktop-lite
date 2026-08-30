@@ -1,6 +1,7 @@
 import AppKit
 import QuartzCore
 
+@MainActor
 final class CaptureHUD {
   private let size = NSSize(width: 118, height: 30)
   private let panel: NSPanel

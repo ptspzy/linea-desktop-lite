@@ -1,7 +1,33 @@
 import Foundation
 
+private let maximumCaptureDuration: TimeInterval = 10 * 60
+
 func captureAudioLevel(decibels: Float) -> Double {
   guard decibels > -60 else { return 0 }
   let amplitude = pow(10, Double(decibels) / 20)
   return pow(min(amplitude * 3.2, 1), 0.55)
+}
+
+func captureShouldAutomaticallyStop(duration: TimeInterval) -> Bool {
+  duration >= maximumCaptureDuration
+}
+
+func removeStaleCaptureFiles(
+  in directory: URL = FileManager.default.temporaryDirectory,
+  now: Date = Date()
+) {
+  guard let files = try? FileManager.default.contentsOfDirectory(
+    at: directory,
+    includingPropertiesForKeys: [.contentModificationDateKey],
+    options: .skipsHiddenFiles
+  ) else { return }
+
+  for file in files where file.lastPathComponent.hasPrefix("linea-lite-")
+    && file.pathExtension == "wav" {
+    guard let modifiedAt = try? file.resourceValues(
+      forKeys: [.contentModificationDateKey]
+    ).contentModificationDate,
+      now.timeIntervalSince(modifiedAt) > 60 * 60 else { continue }
+    try? FileManager.default.removeItem(at: file)
+  }
 }

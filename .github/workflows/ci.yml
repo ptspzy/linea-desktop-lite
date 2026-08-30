@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Swift ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify architecture
+        run: test "$(uname -m)" = "${{ matrix.arch }}"
+      - name: Test and compile
+        run: make lint coverage compile-check

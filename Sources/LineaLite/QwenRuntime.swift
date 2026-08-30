@@ -27,7 +27,7 @@ func qwenModelStatus(
 
 private enum QwenRuntimeError: LocalizedError {
   case runtimeMissing
-  case processFailed(String, Int32)
+  case processFailed(String, Int32, String)
   case processTimedOut(String)
   case serverUnavailable
   case invalidModel
@@ -37,8 +37,10 @@ private enum QwenRuntimeError: LocalizedError {
     switch self {
     case .runtimeMissing:
       "Qwen ASR runtime is missing."
-    case .processFailed(let name, let status):
-      "\(name) failed with status \(status)."
+    case .processFailed(let name, let status, let details):
+      details.isEmpty
+        ? "\(name) failed with status \(status)."
+        : "\(name) failed with status \(status): \(details)"
     case .processTimedOut(let name):
       "\(name) timed out."
     case .serverUnavailable:
@@ -132,7 +134,8 @@ private func qwenRuntimeAndModel() throws -> (URL, URL) {
   return (runtimeURL, try ensureQwenModel())
 }
 
-private final class QwenServer {
+// Mutable process state is confined to queue.
+private final class QwenServer: @unchecked Sendable {
   private let queue = DispatchQueue(label: "io.github.linea.qwen-server")
   private let port = 30_000 + Int(getpid() % 10_000)
   private var process: Process?
@@ -181,7 +184,7 @@ private final class QwenServer {
     try process.run()
     self.process = process
 
-    for _ in 0..<100 {
+    for _ in 0..<300 {
       if process.isRunning, serverReady() { return }
       if !process.isRunning { break }
       Thread.sleep(forTimeInterval: 0.05)
@@ -281,26 +284,49 @@ func processOutput(
   timeout: TimeInterval? = nil
 ) throws -> String {
   let process = Process()
-  let output = Pipe()
+  let outputURL = FileManager.default.temporaryDirectory
+    .appendingPathComponent("linea-lite-process-\(UUID().uuidString).log")
+  guard FileManager.default.createFile(
+    atPath: outputURL.path,
+    contents: nil,
+    attributes: [.posixPermissions: 0o600]
+  ) else {
+    throw CocoaError(.fileWriteUnknown)
+  }
+  let output = try FileHandle(forWritingTo: outputURL)
+  defer {
+    try? output.close()
+    try? FileManager.default.removeItem(at: outputURL)
+  }
   let finished = DispatchSemaphore(value: 0)
   process.executableURL = executableURL
   process.arguments = arguments
   process.standardOutput = output
-  process.standardError = FileHandle.nullDevice
+  process.standardError = output
   process.terminationHandler = { _ in finished.signal() }
   try process.run()
 
   if let timeout, finished.wait(timeout: .now() + timeout) == .timedOut {
     process.terminate()
-    process.waitUntilExit()
+    if finished.wait(timeout: .now() + 1) == .timedOut {
+      kill(process.processIdentifier, SIGKILL)
+      finished.wait()
+    }
     throw QwenRuntimeError.processTimedOut(executableURL.lastPathComponent)
   }
   if timeout == nil {
     finished.wait()
   }
-  let data = output.fileHandleForReading.readDataToEndOfFile()
+  try output.synchronize()
+  let data = try Data(contentsOf: outputURL)
   guard process.terminationStatus == 0 else {
-    throw QwenRuntimeError.processFailed(executableURL.lastPathComponent, process.terminationStatus)
+    let details = String(decoding: data, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    throw QwenRuntimeError.processFailed(
+      executableURL.lastPathComponent,
+      process.terminationStatus,
+      String(details.prefix(500))
+    )
   }
   return String(decoding: data, as: UTF8.self)
 }

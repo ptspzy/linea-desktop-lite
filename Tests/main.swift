@@ -1,6 +1,25 @@
+import AppKit
 import Foundation
 
-assert(
+@inline(never)
+private func expect(
+  _ condition: @autoclosure () -> Bool,
+  _ message: @autoclosure () -> String = "Expectation failed",
+  file: StaticString = #filePath,
+  line: UInt = #line
+) {
+  guard condition() else {
+    fputs("FAIL: \(message()) (\(file):\(line))\n", stderr)
+    exit(1)
+  }
+}
+
+private func fail(_ message: String, file: StaticString = #filePath, line: UInt = #line) -> Never {
+  fputs("FAIL: \(message) (\(file):\(line))\n", stderr)
+  exit(1)
+}
+
+expect(
   qwenCommandArguments(
     modelURL: URL(fileURLWithPath: "/models/qwen.gguf"),
     audioURL: URL(fileURLWithPath: "/tmp/sample.wav")
@@ -9,8 +28,8 @@ assert(
     "-np", "-nt", "-l", "auto", "--lid-backend", "off",
   ]
 )
-assert(cleanedQwenOutput("  最后一句没有缺少。\n") == "最后一句没有缺少。")
-assert(
+expect(cleanedQwenOutput("  最后一句没有缺少。\n") == "最后一句没有缺少。")
+expect(
   qwenServerArguments(modelURL: URL(fileURLWithPath: "/models/qwen.gguf"), port: 17_999) == [
     "--server", "--host", "127.0.0.1", "--port", "17999",
     "--backend", "qwen3", "-m", "/models/qwen.gguf", "-np", "-nt",
@@ -18,7 +37,7 @@ assert(
   ]
 )
 let serverTranscript = try qwenServerTranscript(#"{"text":"  预热后更快。\n"}"#)
-assert(serverTranscript == "预热后更快。")
+expect(serverTranscript == "预热后更快。")
 
 do {
   _ = try processOutput(
@@ -26,9 +45,52 @@ do {
     arguments: ["1"],
     timeout: 0.01
   )
-  assertionFailure("Timed-out recognition process should fail")
+  fail("Timed-out recognition process should fail")
 } catch {
-  assert(error.localizedDescription == "sleep timed out.")
+  expect(error.localizedDescription == "sleep timed out.")
+}
+
+let pasteboard = NSPasteboard(name: NSPasteboard.Name("linea-lite-tests-\(UUID().uuidString)"))
+let customPasteboardType = NSPasteboard.PasteboardType("io.github.linea.test-data")
+let originalPasteboardItem = NSPasteboardItem()
+originalPasteboardItem.setString("original clipboard", forType: .string)
+originalPasteboardItem.setData(Data([1, 2, 3]), forType: customPasteboardType)
+pasteboard.clearContents()
+expect(pasteboard.writeObjects([originalPasteboardItem]))
+
+let pasteboardSnapshot = PasteboardSnapshot(pasteboard: pasteboard)
+guard let dictationChangeCount = setPasteboardText("dictated text", on: pasteboard) else {
+  fail("Dictation text should be written to pasteboard")
+}
+expect(pasteboard.string(forType: .string) == "dictated text")
+expect(pasteboardSnapshot.restore(to: pasteboard, ifUnchangedSince: dictationChangeCount))
+expect(pasteboard.string(forType: .string) == "original clipboard")
+expect(pasteboard.data(forType: customPasteboardType) == Data([1, 2, 3]))
+
+let secondSnapshot = PasteboardSnapshot(pasteboard: pasteboard)
+guard let secondDictationChangeCount = setPasteboardText("second dictation", on: pasteboard) else {
+  fail("Second dictation text should be written to pasteboard")
+}
+pasteboard.clearContents()
+pasteboard.setString("new user clipboard", forType: .string)
+expect(!secondSnapshot.restore(to: pasteboard, ifUnchangedSince: secondDictationChangeCount))
+expect(pasteboard.string(forType: .string) == "new user clipboard")
+
+let largeProcessOutput = try processOutput(
+  executableURL: URL(fileURLWithPath: "/usr/bin/awk"),
+  arguments: [#"BEGIN { for (i = 0; i < 262144; i++) printf "x" }"#],
+  timeout: 2
+)
+expect(largeProcessOutput.count == 262_144)
+
+do {
+  _ = try processOutput(
+    executableURL: URL(fileURLWithPath: "/bin/sh"),
+    arguments: ["-c", "printf 'model details' >&2; exit 7"]
+  )
+  fail("Failed process should report stderr")
+} catch {
+  expect(error.localizedDescription.contains("model details"), error.localizedDescription)
 }
 
 private struct DictationCase {
@@ -104,20 +166,20 @@ for testCase in commonDictationCases {
   print("PASS: \(testCase.name)")
 }
 
-assert(cleanedTranscript("  hello\n\nworld  ") == "hello world")
-assert(cleanedTranscript("Linea   Lite") == "Linea Lite")
-assert(cleanedTranscript("") == "")
-assert(formattedTranscript("这个功能现在能用吗，") == "这个功能现在能用吗？")
-assert(formattedTranscript("西红柿") == "西红柿")
-assert(
+expect(cleanedTranscript("  hello\n\nworld  ") == "hello world")
+expect(cleanedTranscript("Linea   Lite") == "Linea Lite")
+expect(cleanedTranscript("") == "")
+expect(formattedTranscript("这个功能现在能用吗，") == "这个功能现在能用吗？")
+expect(formattedTranscript("西红柿") == "西红柿")
+expect(
   formattedTranscript("当前先完成配置和本地测试 后续的话 再进行真实录音验证和发布检查")
     == "当前先完成配置和本地测试。\n\n后续的话，再进行真实录音验证和发布检查。"
 )
-assert(
+expect(
   formattedTranscript("当前先完成配置和本地测试， 后续的话，再进行真实录音验证和发布检查。")
     == "当前先完成配置和本地测试。\n\n后续的话，再进行真实录音验证和发布检查。"
 )
-assert(
+expect(
   formattedTranscript(
     "当前先完成配置和本地测试 后续的话 再进行真实录音验证和发布检查",
     paragraphBreaks: false
@@ -129,7 +191,7 @@ let longDictation = "第一部分主要说明当前项目的背景、目标和�
   + "第四部分继续确认技术名词、版本号和文件路径不会因为格式处理发生变化。"
   + "最后一部分整理测试结果，并在确认没有内容被改写之后完成本地发布。"
 let formattedLongDictation = formattedTranscript(longDictation)
-assert(
+expect(
   formattedLongDictation
     == "第一部分主要说明当前项目的背景、目标和限制，并确认所有内容都在本地处理。"
       + "第二部分会检查语音识别、自动标点和历史记录在完整流程中是否保持一致。\n\n"
@@ -137,38 +199,68 @@ assert(
       + "第四部分继续确认技术名词、版本号和文件路径不会因为格式处理发生变化。\n\n"
       + "最后一部分整理测试结果，并在确认没有内容被改写之后完成本地发布。"
 )
-assert(!paragraphFormattingAllowed(appName: "Terminal"))
-assert(!paragraphFormattingAllowed(appName: "iTerm2"))
-assert(paragraphFormattingAllowed(appName: "TextEdit"))
+expect(!paragraphFormattingAllowed(appName: "Terminal"))
+expect(!paragraphFormattingAllowed(appName: "iTerm2"))
+expect(paragraphFormattingAllowed(appName: "TextEdit"))
 
 var pushToTalk = PushToTalkState()
-assert(pushToTalk.transition(to: true) == .pressed)
-assert(pushToTalk.isPressed)
-assert(pushToTalk.transition(to: true) == nil)
-assert(pushToTalk.transition(to: false) == .released)
-assert(!pushToTalk.isPressed)
+expect(pushToTalk.transition(to: true) == .pressed)
+expect(pushToTalk.isPressed)
+expect(pushToTalk.transition(to: true) == nil)
+expect(pushToTalk.transition(to: false) == .released)
+expect(!pushToTalk.isPressed)
 
-assert(rightOptionPressed(keyCode: 58, optionPressed: true) == nil)
-assert(rightOptionPressed(keyCode: 61, optionPressed: true) == true)
-assert(rightOptionPressed(keyCode: 61, optionPressed: false) == false)
+expect(rightOptionPressed(keyCode: 58, optionPressed: true) == nil)
+expect(rightOptionPressed(keyCode: 61, optionPressed: true) == true)
+expect(rightOptionPressed(keyCode: 61, optionPressed: false) == false)
 
 var tapShortcut = DictationShortcutState()
-assert(tapShortcut.press(at: 0) == .start)
-assert(tapShortcut.wantsRecording)
-assert(tapShortcut.release(at: 0.1) == .continueRecording)
-assert(tapShortcut.isLatched)
-assert(tapShortcut.press(at: 1) == .stop)
-assert(!tapShortcut.wantsRecording)
-assert(tapShortcut.release(at: 1.1) == nil)
+expect(tapShortcut.press(at: 0) == .start)
+expect(tapShortcut.wantsRecording)
+expect(tapShortcut.release(at: 0.1) == .continueRecording)
+expect(tapShortcut.isLatched)
+expect(tapShortcut.press(at: 1) == .stop)
+expect(!tapShortcut.wantsRecording)
+expect(tapShortcut.release(at: 1.1) == nil)
 
 var holdShortcut = DictationShortcutState()
-assert(holdShortcut.press(at: 0) == .start)
-assert(holdShortcut.release(at: 0.5) == .stop)
-assert(!holdShortcut.wantsRecording)
+expect(holdShortcut.press(at: 0) == .start)
+expect(holdShortcut.release(at: 0.5) == .stop)
+expect(!holdShortcut.wantsRecording)
 
-assert(captureAudioLevel(decibels: -160) == 0)
-assert((0.50...0.55).contains(captureAudioLevel(decibels: -20)))
-assert(captureAudioLevel(decibels: 0) == 1)
+expect(captureAudioLevel(decibels: -160) == 0)
+expect((0.50...0.55).contains(captureAudioLevel(decibels: -20)))
+expect(captureAudioLevel(decibels: 0) == 1)
+expect(!captureShouldAutomaticallyStop(duration: 599.9))
+expect(captureShouldAutomaticallyStop(duration: 600))
+
+let captureDirectory = FileManager.default.temporaryDirectory
+  .appendingPathComponent("linea-lite-capture-cleanup-\(UUID().uuidString)")
+try FileManager.default.createDirectory(at: captureDirectory, withIntermediateDirectories: true)
+let oldCaptureURL = captureDirectory.appendingPathComponent("linea-lite-old.wav")
+let recentCaptureURL = captureDirectory.appendingPathComponent("linea-lite-recent.wav")
+let unrelatedCaptureURL = captureDirectory.appendingPathComponent("other.wav")
+for url in [oldCaptureURL, recentCaptureURL, unrelatedCaptureURL] {
+  try Data([1]).write(to: url)
+}
+let cleanupNow = Date(timeIntervalSince1970: 10_000)
+try FileManager.default.setAttributes(
+  [.modificationDate: cleanupNow.addingTimeInterval(-3_601)],
+  ofItemAtPath: oldCaptureURL.path
+)
+try FileManager.default.setAttributes(
+  [.modificationDate: cleanupNow.addingTimeInterval(-30)],
+  ofItemAtPath: recentCaptureURL.path
+)
+try FileManager.default.setAttributes(
+  [.modificationDate: cleanupNow.addingTimeInterval(-3_601)],
+  ofItemAtPath: unrelatedCaptureURL.path
+)
+removeStaleCaptureFiles(in: captureDirectory, now: cleanupNow)
+expect(!FileManager.default.fileExists(atPath: oldCaptureURL.path))
+expect(FileManager.default.fileExists(atPath: recentCaptureURL.path))
+expect(FileManager.default.fileExists(atPath: unrelatedCaptureURL.path))
+try FileManager.default.removeItem(at: captureDirectory)
 
 var calendar = Calendar(identifier: .gregorian)
 calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -184,11 +276,11 @@ let history = [
   ),
 ]
 let activity = historyActivity(entries: history, endingAt: now, days: 3, calendar: calendar)
-assert(activity.map(\.count) == [0, 1, 1])
-assert(activity.map(\.characters) == [0, 5, 2])
-assert(historyActivityLevel(characters: 0, maximum: 10) == 0)
-assert(historyActivityLevel(characters: 1, maximum: 10) == 1)
-assert(historyActivityLevel(characters: 10, maximum: 10) == 4)
+expect(activity.map(\.count) == [0, 1, 1])
+expect(activity.map(\.characters) == [0, 5, 2])
+expect(historyActivityLevel(characters: 0, maximum: 10) == 0)
+expect(historyActivityLevel(characters: 1, maximum: 10) == 1)
+expect(historyActivityLevel(characters: 10, maximum: 10) == 4)
 
 let workspaceURL = FileManager.default.temporaryDirectory
   .appendingPathComponent("linea-lite-workspace-\(UUID().uuidString)")
@@ -203,38 +295,66 @@ try #"{"terms":[{"canonical":"Typeless","aliases":["Tablas"]},{"canonical":"Qwen
   )
 let workspaceVocabulary = try loadWorkspaceVocabulary(from: workspaceURL)
 let workspaceTerms = Set(workspaceVocabulary.map(\.canonical))
-assert(workspaceTerms.contains(workspaceURL.lastPathComponent))
-assert(workspaceTerms.contains("@linea/desktop-lite"))
-assert(workspaceTerms.contains("swift-argument-parser"))
-assert(workspaceTerms.contains("CER"))
+expect(workspaceTerms.contains(workspaceURL.lastPathComponent))
+expect(workspaceTerms.contains("@linea/desktop-lite"))
+expect(workspaceTerms.contains("swift-argument-parser"))
+expect(workspaceTerms.contains("CER"))
 let workspaceCorrected = applyWorkspaceVocabulary(
   to: "最终目标是达到 Tablas，并使用千问三 ASR。",
   entries: workspaceVocabulary
 )
-assert(workspaceCorrected == "最终目标是达到 Typeless，并使用Qwen3-ASR。", workspaceCorrected)
+expect(workspaceCorrected == "最终目标是达到 Typeless，并使用Qwen3-ASR。", workspaceCorrected)
+
+let modelTermCorrected = applyWorkspaceVocabulary(
+  to: "当前模型使用坤三 A S R零点六 B四 bit M L X balanced。",
+  entries: defaultDeveloperVocabulary
+)
+for term in ["Qwen3-ASR", "0.6B", "4-bit", "MLX", "balanced"] {
+  expect(modelTermCorrected.contains(term), modelTermCorrected)
+}
 try FileManager.default.removeItem(at: workspaceURL)
 
-assert(qwenModelStatus(modelIsValid: false, partialBytes: nil, totalBytes: 100) == .missing)
-assert(qwenModelStatus(modelIsValid: false, partialBytes: 48, totalBytes: 100) == .downloading(48))
-assert(qwenModelStatus(modelIsValid: true, partialBytes: nil, totalBytes: 100) == .ready)
+expect(qwenModelStatus(modelIsValid: false, partialBytes: nil, totalBytes: 100) == .missing)
+expect(qwenModelStatus(modelIsValid: false, partialBytes: 48, totalBytes: 100) == .downloading(48))
+expect(qwenModelStatus(modelIsValid: true, partialBytes: nil, totalBytes: 100) == .ready)
 
 let historyURL = FileManager.default.temporaryDirectory
   .appendingPathComponent("linea-lite-tests-\(UUID().uuidString)/history.json")
 let store = HistoryStore(url: historyURL, limit: 2)
-assert(store.append(history[0]))
-assert(store.append(history[1]))
-assert(store.append(HistoryEntry(
+expect(store.append(history[0]))
+expect(store.append(history[1]))
+expect(store.append(HistoryEntry(
   id: "oldest",
   createdAt: calendar.date(byAdding: .day, value: -2, to: now)!,
   text: "old",
   duration: 1,
   appName: nil
 )))
-assert(store.entries.map(\.id) == ["today", "yesterday"])
+expect(store.entries.map(\.id) == ["today", "yesterday"])
 let reloaded = HistoryStore(url: historyURL, limit: 2)
-assert(reloaded.entries == store.entries)
-assert(reloaded.clear())
-assert(HistoryStore(url: historyURL).entries.isEmpty)
+expect(reloaded.entries == store.entries)
+expect(reloaded.clear())
+expect(HistoryStore(url: historyURL).entries.isEmpty)
 try? FileManager.default.removeItem(at: historyURL.deletingLastPathComponent())
+
+let corruptHistoryURL = FileManager.default.temporaryDirectory
+  .appendingPathComponent("linea-lite-corrupt-history-\(UUID().uuidString)/history.json")
+try FileManager.default.createDirectory(
+  at: corruptHistoryURL.deletingLastPathComponent(),
+  withIntermediateDirectories: true
+)
+let corruptHistoryData = Data("not valid json".utf8)
+try corruptHistoryData.write(to: corruptHistoryURL)
+let recoveredStore = HistoryStore(url: corruptHistoryURL)
+expect(recoveredStore.entries.isEmpty)
+guard let recoveredHistoryURL = recoveredStore.recoveredCorruptFileURL else {
+  fail("Corrupt history should be preserved")
+}
+let recoveredHistoryData = try Data(contentsOf: recoveredHistoryURL)
+expect(recoveredHistoryData == corruptHistoryData)
+expect(!FileManager.default.fileExists(atPath: corruptHistoryURL.path))
+expect(recoveredStore.append(history[0]))
+expect(HistoryStore(url: corruptHistoryURL).entries == [history[0]])
+try? FileManager.default.removeItem(at: corruptHistoryURL.deletingLastPathComponent())
 
 print("Tests ok")

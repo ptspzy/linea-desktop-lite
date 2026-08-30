@@ -21,6 +21,16 @@ struct WorkspaceVocabularyEntry: Codable, Hashable {
   }
 }
 
+let defaultDeveloperVocabulary = [
+  WorkspaceVocabularyEntry(
+    canonical: "Qwen3-ASR",
+    aliases: ["坤三 A S R", "坤三ASR", "千问三 A S R", "千问三 ASR", "千问三ASR"]
+  ),
+  WorkspaceVocabularyEntry(canonical: "0.6B", aliases: ["零点六 B", "零点六B"]),
+  WorkspaceVocabularyEntry(canonical: "4-bit", aliases: ["四 bit", "四bit", "4 bit"]),
+  WorkspaceVocabularyEntry(canonical: "MLX", aliases: ["M L X"]),
+]
+
 private struct WorkspaceVocabularyFile: Decodable {
   let terms: [WorkspaceVocabularyEntry]
 }
@@ -110,5 +120,5 @@ private func replacingVocabularyTerm(in value: String, term: String, with canoni
 }
 
 private func isVocabularyWordCharacter(_ character: Character) -> Bool {
-  character == "_" || (character.isASCII && character.isLetter) || character.isNumber
+  character == "_" || (character.isASCII && (character.isLetter || character.isNumber))
 }

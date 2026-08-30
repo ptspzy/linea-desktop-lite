@@ -62,12 +62,23 @@ func historyActivityLevel(characters: Int, maximum: Int) -> Int {
 final class HistoryStore {
   private let url: URL
   private let limit: Int
+  private var canSave = true
   private(set) var entries: [HistoryEntry]
+  private(set) var recoveredCorruptFileURL: URL?
 
   init(url: URL = HistoryStore.defaultURL, limit: Int = 500) {
     self.url = url
     self.limit = limit
-    entries = (try? Self.load(from: url)) ?? []
+    do {
+      entries = try Self.load(from: url)
+    } catch {
+      entries = []
+      do {
+        recoveredCorruptFileURL = try Self.preserveCorruptHistory(at: url)
+      } catch {
+        canSave = false
+      }
+    }
     entries.sort { $0.createdAt > $1.createdAt }
     entries = Array(entries.prefix(limit))
   }
@@ -97,6 +108,7 @@ final class HistoryStore {
   }
 
   private func save() -> Bool {
+    guard canSave else { return false }
     do {
       try FileManager.default.createDirectory(
         at: url.deletingLastPathComponent(),
@@ -117,6 +129,15 @@ final class HistoryStore {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .millisecondsSince1970
     return try decoder.decode([HistoryEntry].self, from: Data(contentsOf: url))
+  }
+
+  private static func preserveCorruptHistory(at url: URL) throws -> URL {
+    let backupURL = url.deletingLastPathComponent().appendingPathComponent(
+      "history-corrupt-\(UUID().uuidString).json"
+    )
+    try FileManager.default.moveItem(at: url, to: backupURL)
+    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backupURL.path)
+    return backupURL
   }
 
   private static let defaultURL = FileManager.default

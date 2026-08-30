@@ -18,6 +18,7 @@ private enum DictationError: LocalizedError {
   }
 }
 
+@MainActor
 private final class PushToTalkKey {
   private var globalMonitor: Any?
   private var localMonitor: Any?
@@ -37,15 +38,15 @@ private final class PushToTalkKey {
   func register() {
     guard globalMonitor == nil, localMonitor == nil else { return }
     globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-      self?.handle(event)
+      self?.enqueue(event)
     }
     localMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-      self?.handle(event)
+      self?.enqueue(event)
       return event
     }
   }
 
-  private func handle(_ event: NSEvent) {
+  nonisolated private func enqueue(_ event: NSEvent) {
     guard let pressed = rightOptionPressed(
       keyCode: event.keyCode,
       optionPressed: event.modifierFlags
@@ -68,14 +69,6 @@ private final class PushToTalkKey {
     }
   }
 
-  deinit {
-    if let globalMonitor {
-      NSEvent.removeMonitor(globalMonitor)
-    }
-    if let localMonitor {
-      NSEvent.removeMonitor(localMonitor)
-    }
-  }
 }
 
 @MainActor
@@ -89,13 +82,17 @@ private final class DictationEngine {
     recorder?.isRecording == true
   }
 
+  var recordingDuration: TimeInterval {
+    startedAt.map { Date().timeIntervalSince($0) } ?? 0
+  }
+
   var audioLevel: Double {
     guard let recorder, recorder.isRecording else { return 0 }
     recorder.updateMeters()
     return captureAudioLevel(decibels: recorder.averagePower(forChannel: 0))
   }
 
-  func requestAccess(_ completion: @escaping (Bool) -> Void) {
+  func requestAccess(_ completion: @escaping @Sendable @MainActor (Bool) -> Void) {
     AVCaptureDevice.requestAccess(for: .audio) { microphoneAllowed in
       DispatchQueue.main.async {
         completion(microphoneAllowed)
@@ -228,6 +225,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
+    removeStaleCaptureFiles()
     loadSavedWorkspace()
     buildMenu()
 
@@ -252,6 +250,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     historyView.frame.size = historyView.intrinsicContentSize
     historyMenuItem.view = historyView
     menu.addItem(historyMenuItem)
+    if let backupURL = history.recoveredCorruptFileURL {
+      let recoveryItem = NSMenuItem(
+        title: "Recovered history: \(backupURL.lastPathComponent)",
+        action: nil,
+        keyEquivalent: ""
+      )
+      recoveryItem.isEnabled = false
+      menu.addItem(recoveryItem)
+    }
     menu.addItem(NSMenuItem.separator())
     statusMenuItem.isEnabled = false
     menu.addItem(statusMenuItem)
@@ -376,7 +383,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         switch result {
         case .success((let transcript, let duration)):
           let text = formattedTranscript(
-            applyWorkspaceVocabulary(to: transcript, entries: self.workspaceVocabulary),
+            applyWorkspaceVocabulary(
+              to: transcript,
+              entries: defaultDeveloperVocabulary + self.workspaceVocabulary
+            ),
             paragraphBreaks: paragraphFormattingAllowed(appName: appName)
           )
           guard !text.isEmpty else {
@@ -408,8 +418,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
   private func insertAtCursor(_ text: String) -> Bool {
     let pasteboard = NSPasteboard.general
-    pasteboard.clearContents()
-    pasteboard.setString(text, forType: .string)
+    let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
+    guard let dictationChangeCount = setPasteboardText(text, on: pasteboard) else {
+      snapshot.restore(to: pasteboard, ifUnchangedSince: pasteboard.changeCount)
+      return false
+    }
 
     guard AXIsProcessTrusted() else {
       requestAccessibility()
@@ -417,12 +430,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     }
 
     let source = CGEventSource(stateID: .hidSystemState)
-    let down = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: true)
-    let up = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: false)
-    down?.flags = .maskCommand
-    up?.flags = .maskCommand
-    down?.post(tap: .cghidEventTap)
-    up?.post(tap: .cghidEventTap)
+    guard let down = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: true),
+          let up = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: false) else {
+      snapshot.restore(to: pasteboard, ifUnchangedSince: dictationChangeCount)
+      return false
+    }
+    down.flags = .maskCommand
+    up.flags = .maskCommand
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+      snapshot.restore(to: pasteboard, ifUnchangedSince: dictationChangeCount)
+    }
     return true
   }
 
@@ -534,7 +553,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   private func requestAccessibility() {
-    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+    let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
     AXIsProcessTrustedWithOptions(options)
   }
 
@@ -568,6 +587,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
       MainActor.assumeIsolated {
         guard let self else { return }
+        if captureShouldAutomaticallyStop(duration: self.engine.recordingDuration) {
+          self.finishDictation()
+          return
+        }
         self.hud.setLevel(self.engine.audioLevel)
       }
     }
