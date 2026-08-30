@@ -23,14 +23,14 @@ Not included:
 
 ## Requirements
 
-- macOS 13 or newer.
-- Xcode command line tools.
-- A `qwen-asr` runtime built from [CrispASR](https://github.com/CrispStrobe/CrispASR).
+- macOS 13.5 or newer on Apple Silicon or Intel.
+- Xcode command line tools and CMake to build the pinned [CrispASR](https://github.com/CrispStrobe/CrispASR) runtime.
 
 ## Build
 
 ```bash
-QWEN_ASR_BIN=/path/to/qwen-asr make build
+make runtime-$(uname -m)
+make build
 ```
 
 The app bundle is written to:
@@ -74,10 +74,14 @@ make test
 ## Package
 
 ```bash
+make runtimes
 make package
 ```
 
-This creates an installable DMG in `build/` without the ASR model.
+This creates one Universal DMG in `build/` for Apple Silicon and Intel, without the ASR model.
+Intel uses Accelerate instead of Metal and is expected to transcribe more slowly.
+The default package is locally signed. Internal distribution without a Gatekeeper warning requires
+the company's Developer ID Application certificate and Apple notarization.
 
 ## License
 
