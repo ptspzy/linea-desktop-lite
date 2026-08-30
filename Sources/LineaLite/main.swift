@@ -195,10 +195,31 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private var levelTimer: Timer?
   private var targetAppName: String?
   private var isStarting = false
+  private var isDownloadingModel = false
+  private var modelProgressTimer: Timer?
+  private var hasPromptedForModel = false
+  private var workspaceURL: URL?
+  private var workspaceVocabulary: [WorkspaceVocabularyEntry] = []
   private var shortcut = DictationShortcutState()
   private var status = "Tap or hold Right Option to dictate"
 
   private let statusMenuItem = NSMenuItem()
+  private let modelMenuItem = NSMenuItem(
+    title: "Download ASR Model...",
+    action: #selector(downloadModel(_:)),
+    keyEquivalent: ""
+  )
+  private let workspaceStatusMenuItem = NSMenuItem()
+  private let chooseWorkspaceMenuItem = NSMenuItem(
+    title: "Choose Workspace...",
+    action: #selector(chooseWorkspace(_:)),
+    keyEquivalent: ""
+  )
+  private let clearWorkspaceMenuItem = NSMenuItem(
+    title: "Clear Workspace",
+    action: #selector(clearWorkspace(_:)),
+    keyEquivalent: ""
+  )
   private let clearHistoryMenuItem = NSMenuItem(
     title: "Clear History...",
     action: #selector(clearHistory(_:)),
@@ -207,6 +228,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
+    loadSavedWorkspace()
     buildMenu()
 
     hotKey = PushToTalkKey(
@@ -214,6 +236,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       onRelease: { [weak self] in self?.handleShortcutRelease() }
     )
     prepareAccessibility()
+    DispatchQueue.main.async { [weak self] in
+      self?.promptForModelIfNeeded()
+    }
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -233,6 +258,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     let shortcutMenuItem = NSMenuItem(title: "Right Option: tap or hold", action: nil, keyEquivalent: "")
     shortcutMenuItem.isEnabled = false
     menu.addItem(shortcutMenuItem)
+    menu.addItem(NSMenuItem.separator())
+    modelMenuItem.target = self
+    menu.addItem(modelMenuItem)
+    menu.addItem(NSMenuItem.separator())
+    workspaceStatusMenuItem.isEnabled = false
+    menu.addItem(workspaceStatusMenuItem)
+    chooseWorkspaceMenuItem.target = self
+    menu.addItem(chooseWorkspaceMenuItem)
+    clearWorkspaceMenuItem.target = self
+    menu.addItem(clearWorkspaceMenuItem)
     menu.addItem(NSMenuItem.separator())
     clearHistoryMenuItem.target = self
     menu.addItem(clearHistoryMenuItem)
@@ -273,6 +308,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
   private func startDictation() {
     guard !engine.isRecording, !isStarting else { return }
+    guard currentQwenModelStatus() == .ready else {
+      shortcut.reset()
+      promptForModelIfNeeded(force: true)
+      return
+    }
     isStarting = true
     targetAppName = NSWorkspace.shared.frontmostApplication?.localizedName
     hud.showRecording()
@@ -336,7 +376,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         switch result {
         case .success((let transcript, let duration)):
           let text = formattedTranscript(
-            transcript,
+            applyWorkspaceVocabulary(to: transcript, entries: self.workspaceVocabulary),
             paragraphBreaks: paragraphFormattingAllowed(appName: appName)
           )
           guard !text.isEmpty else {
@@ -399,6 +439,100 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     refreshMenu()
   }
 
+  @objc private func downloadModel(_ sender: Any?) {
+    beginModelDownload()
+  }
+
+  private func promptForModelIfNeeded(force: Bool = false) {
+    guard currentQwenModelStatus() != .ready, force || !hasPromptedForModel else { return }
+    hasPromptedForModel = true
+
+    let alert = NSAlert()
+    alert.messageText = "Download local speech model?"
+    alert.informativeText = "Linea Lite needs the Qwen3-ASR model (about 602 MB). It is downloaded once and speech recognition stays on this Mac."
+    alert.addButton(withTitle: "Download")
+    alert.addButton(withTitle: "Later")
+    NSApp.activate(ignoringOtherApps: true)
+    if alert.runModal() == .alertFirstButtonReturn {
+      beginModelDownload()
+    }
+  }
+
+  private func beginModelDownload() {
+    guard !isDownloadingModel, currentQwenModelStatus() != .ready else { return }
+    isDownloadingModel = true
+    status = "Downloading local ASR model..."
+    startModelProgressUpdates()
+    refreshMenu()
+
+    Task { [weak self] in
+      let errorMessage = await Task.detached(priority: .utility) {
+        do {
+          try installQwenModel()
+          return nil as String?
+        } catch {
+          return error.localizedDescription
+        }
+      }.value
+      self?.finishModelDownload(errorMessage: errorMessage)
+    }
+  }
+
+  private func startModelProgressUpdates() {
+    modelProgressTimer?.invalidate()
+    let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated { self?.refreshMenu() }
+    }
+    modelProgressTimer = timer
+    RunLoop.main.add(timer, forMode: .common)
+  }
+
+  private func finishModelDownload(errorMessage: String?) {
+    modelProgressTimer?.invalidate()
+    modelProgressTimer = nil
+    isDownloadingModel = false
+    status = errorMessage ?? "ASR model ready"
+    refreshMenu()
+  }
+
+  @objc private func chooseWorkspace(_ sender: Any?) {
+    let panel = NSOpenPanel()
+    panel.message = "Choose the workspace whose local terms Linea should preserve."
+    panel.prompt = "Choose"
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    NSApp.activate(ignoringOtherApps: true)
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    setWorkspace(url)
+  }
+
+  @objc private func clearWorkspace(_ sender: Any?) {
+    workspaceURL = nil
+    workspaceVocabulary = []
+    UserDefaults.standard.removeObject(forKey: "workspacePath")
+    status = "Workspace vocabulary cleared"
+    refreshMenu()
+  }
+
+  private func loadSavedWorkspace() {
+    guard let path = UserDefaults.standard.string(forKey: "workspacePath") else { return }
+    setWorkspace(URL(fileURLWithPath: path), persist: false)
+  }
+
+  private func setWorkspace(_ url: URL, persist: Bool = true) {
+    do {
+      let vocabulary = try loadWorkspaceVocabulary(from: url)
+      workspaceURL = url
+      workspaceVocabulary = vocabulary
+      if persist { UserDefaults.standard.set(url.path, forKey: "workspacePath") }
+      status = "Loaded \(vocabulary.count) workspace terms"
+    } catch {
+      status = "Workspace vocabulary: \(error.localizedDescription)"
+    }
+    refreshMenu()
+  }
+
   private func requestAccessibility() {
     let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
     AXIsProcessTrustedWithOptions(options)
@@ -451,6 +585,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       ? "● Linea"
       : "Linea \(history.entries.count)"
     statusMenuItem.title = status
+    switch currentQwenModelStatus() {
+    case .ready:
+      modelMenuItem.title = "ASR Model: Ready"
+      modelMenuItem.isEnabled = false
+    case .missing:
+      modelMenuItem.title = isDownloadingModel ? "Downloading ASR Model..." : "Download ASR Model (602 MB)..."
+      modelMenuItem.isEnabled = !isDownloadingModel
+    case .downloading(let percent):
+      modelMenuItem.title = isDownloadingModel
+        ? "Downloading ASR Model: \(percent)%"
+        : "Resume ASR Model Download: \(percent)%..."
+      modelMenuItem.isEnabled = !isDownloadingModel
+    }
+    workspaceStatusMenuItem.title = workspaceURL.map { "Workspace: \($0.lastPathComponent)" }
+      ?? "Workspace: None"
+    clearWorkspaceMenuItem.isEnabled = workspaceURL != nil
     clearHistoryMenuItem.isEnabled = !history.entries.isEmpty
     historyView.update(entries: history.entries)
   }

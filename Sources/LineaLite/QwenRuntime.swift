@@ -9,6 +9,22 @@ private let qwenModelDownloadURL = URL(
 )!
 private let qwenServer = QwenServer()
 
+enum QwenModelStatus: Equatable {
+  case missing
+  case downloading(Int)
+  case ready
+}
+
+func qwenModelStatus(
+  modelIsValid: Bool,
+  partialBytes: Int?,
+  totalBytes: Int
+) -> QwenModelStatus {
+  if modelIsValid { return .ready }
+  guard let partialBytes, partialBytes > 0, totalBytes > 0 else { return .missing }
+  return .downloading(min(100, partialBytes * 100 / totalBytes))
+}
+
 private enum QwenRuntimeError: LocalizedError {
   case runtimeMissing
   case processFailed(String, Int32)
@@ -71,6 +87,20 @@ func prepareQwen() {
 
 func stopQwen() {
   qwenServer.stop()
+}
+
+func currentQwenModelStatus() -> QwenModelStatus {
+  let locations = qwenModelLocations()
+  let partialBytes = try? locations.partialURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
+  return qwenModelStatus(
+    modelIsValid: validModel(at: locations.modelURL, receiptURL: locations.receiptURL),
+    partialBytes: partialBytes,
+    totalBytes: qwenModelSize
+  )
+}
+
+func installQwenModel() throws {
+  _ = try ensureQwenModel()
 }
 
 func transcribeWithQwen(audioURL: URL) throws -> String {
@@ -188,12 +218,11 @@ private final class QwenServer {
 }
 
 private func ensureQwenModel() throws -> URL {
-  let directory = FileManager.default
-    .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("Linea Lite/models/qwen3-asr-0.6b-q4-k/\(qwenModelSHA256)")
-  let modelURL = directory.appendingPathComponent(qwenModelName)
-  let receiptURL = directory.appendingPathComponent("verified.sha256")
-  let partialURL = directory.appendingPathComponent(qwenModelName + ".part")
+  let locations = qwenModelLocations()
+  let directory = locations.modelURL.deletingLastPathComponent()
+  let modelURL = locations.modelURL
+  let receiptURL = locations.receiptURL
+  let partialURL = locations.partialURL
 
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
   if validModel(at: modelURL, receiptURL: receiptURL) {
@@ -219,6 +248,17 @@ private func ensureQwenModel() throws -> URL {
   try FileManager.default.moveItem(at: partialURL, to: modelURL)
   try qwenModelSHA256.write(to: receiptURL, atomically: true, encoding: .utf8)
   return modelURL
+}
+
+private func qwenModelLocations() -> (modelURL: URL, receiptURL: URL, partialURL: URL) {
+  let directory = FileManager.default
+    .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("Linea Lite/models/qwen3-asr-0.6b-q4-k/\(qwenModelSHA256)")
+  return (
+    directory.appendingPathComponent(qwenModelName),
+    directory.appendingPathComponent("verified.sha256"),
+    directory.appendingPathComponent(qwenModelName + ".part")
+  )
 }
 
 private func validModel(at url: URL, receiptURL: URL?) -> Bool {

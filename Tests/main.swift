@@ -190,6 +190,34 @@ assert(historyActivityLevel(characters: 0, maximum: 10) == 0)
 assert(historyActivityLevel(characters: 1, maximum: 10) == 1)
 assert(historyActivityLevel(characters: 10, maximum: 10) == 4)
 
+let workspaceURL = FileManager.default.temporaryDirectory
+  .appendingPathComponent("linea-lite-workspace-\(UUID().uuidString)")
+try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+try #"{"name":"@linea/desktop-lite","dependencies":{"swift-argument-parser":"1.5.0"}}"#
+  .write(to: workspaceURL.appendingPathComponent("package.json"), atomically: true, encoding: .utf8)
+try #"{"terms":[{"canonical":"Typeless","aliases":["Tablas"]},{"canonical":"Qwen3-ASR","aliases":["千问三 ASR"]},{"canonical":"CER"}]}"#
+  .write(
+    to: workspaceURL.appendingPathComponent(".linea-vocabulary.json"),
+    atomically: true,
+    encoding: .utf8
+  )
+let workspaceVocabulary = try loadWorkspaceVocabulary(from: workspaceURL)
+let workspaceTerms = Set(workspaceVocabulary.map(\.canonical))
+assert(workspaceTerms.contains(workspaceURL.lastPathComponent))
+assert(workspaceTerms.contains("@linea/desktop-lite"))
+assert(workspaceTerms.contains("swift-argument-parser"))
+assert(workspaceTerms.contains("CER"))
+let workspaceCorrected = applyWorkspaceVocabulary(
+  to: "最终目标是达到 Tablas，并使用千问三 ASR。",
+  entries: workspaceVocabulary
+)
+assert(workspaceCorrected == "最终目标是达到 Typeless，并使用Qwen3-ASR。", workspaceCorrected)
+try FileManager.default.removeItem(at: workspaceURL)
+
+assert(qwenModelStatus(modelIsValid: false, partialBytes: nil, totalBytes: 100) == .missing)
+assert(qwenModelStatus(modelIsValid: false, partialBytes: 48, totalBytes: 100) == .downloading(48))
+assert(qwenModelStatus(modelIsValid: true, partialBytes: nil, totalBytes: 100) == .ready)
+
 let historyURL = FileManager.default.temporaryDirectory
   .appendingPathComponent("linea-lite-tests-\(UUID().uuidString)/history.json")
 let store = HistoryStore(url: historyURL, limit: 2)
