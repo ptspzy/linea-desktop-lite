@@ -8,7 +8,6 @@ Included:
 
 - Native macOS microphone capture.
 - Qwen3-ASR 0.6B Q4_K local speech recognition for zh-CN.
-- Native Apple speech recognition fallback.
 - Native automatic punctuation and local format-only paragraph/list formatting.
 - Push-to-talk dictation by holding the right `Option` key.
 - Linea-style floating waveform while recording and processing.
@@ -47,7 +46,7 @@ make run
 
 macOS will ask for microphone permission on first use. The first transcription downloads the
 SHA-256-pinned Qwen3-ASR model (about 602 MiB) to `~/Library/Application Support/Linea Lite/models/`.
-Recognition remains local; Apple on-device speech recognition is used only if Qwen is unavailable.
+Recognition remains local and uses Qwen only.
 Accessibility permission is needed for right-Option detection and automatic paste. Once it is enabled, Linea starts listening without a restart.
 Transcript text, time, duration, and target-app name are stored locally in `~/Library/Application Support/Linea Lite/history.json`.
 

@@ -22,7 +22,5 @@
   <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>Linea Lite records microphone audio for local dictation.</string>
-  <key>NSSpeechRecognitionUsageDescription</key>
-  <string>Linea Lite uses macOS speech recognition to transcribe your voice.</string>
 </dict>
 </plist>

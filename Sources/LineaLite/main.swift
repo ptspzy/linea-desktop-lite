@@ -1,24 +1,17 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
-import Speech
 
 private let pasteKeyCode: CGKeyCode = 9
 
 private enum DictationError: LocalizedError {
   case busy
-  case notAvailable
-  case noOnDeviceRecognition
   case noAudio
 
   var errorDescription: String? {
     switch self {
     case .busy:
       "Still working."
-    case .notAvailable:
-      "Speech recognition is not available."
-    case .noOnDeviceRecognition:
-      "On-device zh-CN recognition is not available."
     case .noAudio:
       "No audio was recorded."
     }
@@ -87,9 +80,7 @@ private final class PushToTalkKey {
 
 @MainActor
 private final class DictationEngine {
-  private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
   private var recorder: AVAudioRecorder?
-  private var task: SFSpeechRecognitionTask?
   private var startedAt: Date?
   private var audioURL: URL?
   private var isTranscribing = false
@@ -118,7 +109,6 @@ private final class DictationEngine {
     }
 
     stopRecording()
-    task?.cancel()
 
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("linea-lite-\(UUID().uuidString).wav")
@@ -149,6 +139,11 @@ private final class DictationEngine {
 
     let duration = Date().timeIntervalSince(startedAt)
     stopRecording()
+    guard let file = try? AVAudioFile(forReading: url), file.length > 0 else {
+      finish(url: url)
+      completion(.failure(DictationError.noAudio))
+      return
+    }
     transcribe(url: url, duration: duration, completion)
   }
 
@@ -173,79 +168,6 @@ private final class DictationEngine {
         self.finish(url: url)
         completion(.success((text, duration)))
       } catch {
-        if #available(macOS 26.0, *) {
-          do {
-            let text = try await self.transcribeWithSpeechAnalyzer(url: url)
-            self.finish(url: url)
-            completion(.success((text, duration)))
-          } catch {
-            self.transcribeWithLegacyRecognizer(url: url, duration: duration, completion)
-          }
-        } else {
-          self.transcribeWithLegacyRecognizer(url: url, duration: duration, completion)
-        }
-      }
-    }
-  }
-
-  @available(macOS 26.0, *)
-  private func transcribeWithSpeechAnalyzer(url: URL) async throws -> String {
-    let transcriber = SpeechTranscriber(
-      locale: Locale(identifier: "zh-CN"),
-      preset: .transcription
-    )
-    if await AssetInventory.status(forModules: [transcriber]) != .installed {
-      guard let request = try await AssetInventory.assetInstallationRequest(
-        supporting: [transcriber]
-      ) else { throw DictationError.noOnDeviceRecognition }
-      try await request.downloadAndInstall()
-    }
-
-    async let transcript = transcriber.results.reduce("") { partial, result in
-      partial + String(result.text.characters)
-    }
-    let file = try AVAudioFile(forReading: url)
-    let analyzer = SpeechAnalyzer(modules: [transcriber])
-    if let lastSample = try await analyzer.analyzeSequence(from: file) {
-      try await analyzer.finalizeAndFinish(through: lastSample)
-    } else {
-      await analyzer.cancelAndFinishNow()
-    }
-    return try await transcript
-  }
-
-  private func transcribeWithLegacyRecognizer(
-    url: URL,
-    duration: TimeInterval,
-    _ completion: @escaping (Result<(String, TimeInterval), Error>) -> Void
-  ) {
-    guard let recognizer else {
-      finish(url: url)
-      completion(.failure(DictationError.notAvailable))
-      return
-    }
-
-    var didFinish = false
-    var transcripts = SpeechResultAccumulator()
-    let request = SFSpeechURLRecognitionRequest(url: url)
-    request.requiresOnDeviceRecognition = true
-    request.addsPunctuation = true
-    request.shouldReportPartialResults = true
-    request.taskHint = .dictation
-
-    task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-      guard let self, !didFinish else { return }
-
-      if let result,
-         let text = transcripts.accept(
-           text: result.bestTranscription.formattedString,
-           isFinal: result.isFinal
-         ) {
-        didFinish = true
-        self.finish(url: url)
-        completion(.success((text, duration)))
-      } else if let error {
-        didFinish = true
         self.finish(url: url)
         completion(.failure(error))
       }
@@ -254,7 +176,6 @@ private final class DictationEngine {
 
   private func finish(url: URL) {
     isTranscribing = false
-    task = nil
     audioURL = nil
     try? FileManager.default.removeItem(at: url)
   }
@@ -331,7 +252,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       self.isStarting = false
       guard allowed else {
         self.targetAppName = nil
-        self.status = "Microphone or speech permission denied"
+        self.status = "Microphone permission denied"
         self.hud.showError()
         self.refreshMenu()
         return

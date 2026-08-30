@@ -10,6 +10,7 @@ private let qwenModelDownloadURL = URL(
 private enum QwenRuntimeError: LocalizedError {
   case runtimeMissing
   case processFailed(String, Int32)
+  case processTimedOut(String)
   case invalidModel
   case emptyTranscript
 
@@ -19,6 +20,8 @@ private enum QwenRuntimeError: LocalizedError {
       "Qwen ASR runtime is missing."
     case .processFailed(let name, let status):
       "\(name) failed with status \(status)."
+    case .processTimedOut(let name):
+      "\(name) timed out."
     case .invalidModel:
       "The downloaded Qwen ASR model did not pass verification."
     case .emptyTranscript:
@@ -50,7 +53,8 @@ func transcribeWithQwen(audioURL: URL) throws -> String {
   let modelURL = try ensureQwenModel()
   let output = try processOutput(
     executableURL: runtimeURL,
-    arguments: qwenCommandArguments(modelURL: modelURL, audioURL: audioURL)
+    arguments: qwenCommandArguments(modelURL: modelURL, audioURL: audioURL),
+    timeout: 180
   )
   let text = cleanedQwenOutput(output)
   guard !text.isEmpty else { throw QwenRuntimeError.emptyTranscript }
@@ -105,16 +109,30 @@ private func validModel(at url: URL, receiptURL: URL?) -> Bool {
   return output.hasPrefix(qwenModelSHA256)
 }
 
-private func processOutput(executableURL: URL, arguments: [String]) throws -> String {
+func processOutput(
+  executableURL: URL,
+  arguments: [String],
+  timeout: TimeInterval? = nil
+) throws -> String {
   let process = Process()
   let output = Pipe()
+  let finished = DispatchSemaphore(value: 0)
   process.executableURL = executableURL
   process.arguments = arguments
   process.standardOutput = output
   process.standardError = FileHandle.nullDevice
+  process.terminationHandler = { _ in finished.signal() }
   try process.run()
+
+  if let timeout, finished.wait(timeout: .now() + timeout) == .timedOut {
+    process.terminate()
+    process.waitUntilExit()
+    throw QwenRuntimeError.processTimedOut(executableURL.lastPathComponent)
+  }
+  if timeout == nil {
+    finished.wait()
+  }
   let data = output.fileHandleForReading.readDataToEndOfFile()
-  process.waitUntilExit()
   guard process.terminationStatus == 0 else {
     throw QwenRuntimeError.processFailed(executableURL.lastPathComponent, process.terminationStatus)
   }

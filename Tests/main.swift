@@ -11,6 +11,17 @@ assert(
 )
 assert(cleanedQwenOutput("  最后一句没有缺少。\n") == "最后一句没有缺少。")
 
+do {
+  _ = try processOutput(
+    executableURL: URL(fileURLWithPath: "/bin/sleep"),
+    arguments: ["1"],
+    timeout: 0.01
+  )
+  assertionFailure("Timed-out recognition process should fail")
+} catch {
+  assert(error.localizedDescription == "sleep timed out.")
+}
+
 private struct DictationCase {
   let name: String
   let input: String
@@ -135,30 +146,6 @@ assert(rightOptionPressed(keyCode: 61, optionPressed: false) == false)
 assert(captureAudioLevel(decibels: -160) == 0)
 assert((0.50...0.55).contains(captureAudioLevel(decibels: -20)))
 assert(captureAudioLevel(decibels: 0) == 1)
-
-var speechResults = SpeechResultAccumulator()
-assert(speechResults.accept(text: "西红柿", isFinal: false) == nil)
-assert(speechResults.accept(text: "", isFinal: true) == "西红柿")
-
-var longSpeechResults = SpeechResultAccumulator()
-let completePartial = "第一段记录项目背景和目标 第二段确认关键数字是二十五 第三段整理后续行动"
-assert(longSpeechResults.accept(text: completePartial, isFinal: false) == nil)
-assert(longSpeechResults.accept(text: "第三段整理后续行动", isFinal: true) == completePartial)
-
-var segmentedSpeechResults = SpeechResultAccumulator()
-let earlierPartial = "第一段记录项目背景和目标 第二段确认关键数字是二十五"
-assert(segmentedSpeechResults.accept(text: earlierPartial, isFinal: false) == nil)
-assert(
-  segmentedSpeechResults.accept(text: "第三段整理后续行动", isFinal: true)
-    == earlierPartial + " 第三段整理后续行动"
-)
-
-var overlappingSpeechResults = SpeechResultAccumulator()
-assert(overlappingSpeechResults.accept(text: "第一段内容 第二段关键数字", isFinal: false) == nil)
-assert(
-  overlappingSpeechResults.accept(text: "关键数字是二十五 第三段内容", isFinal: true)
-    == "第一段内容 第二段关键数字是二十五 第三段内容"
-)
 
 var calendar = Calendar(identifier: .gregorian)
 calendar.timeZone = TimeZone(secondsFromGMT: 0)!

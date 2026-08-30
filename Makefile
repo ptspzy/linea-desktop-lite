@@ -16,7 +16,7 @@ build:
 	cp Info.plist "$(APP_DIR)/Contents/Info.plist"
 	cp "$(QWEN_ASR_BIN)" "$(APP_DIR)/Contents/Resources/bin/qwen-asr"
 	cp -R Resources/. "$(APP_DIR)/Contents/Resources/"
-	xcrun swiftc -O -framework AppKit -framework ApplicationServices -framework AVFoundation -framework Speech $(SOURCES) -o "$(BIN)"
+	xcrun swiftc -O -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(BIN)"
 	@if security find-identity -v -p codesigning | /usr/bin/grep -Fq '"$(SIGN_IDENTITY)"'; then \
 		codesign --force --sign "$(SIGN_IDENTITY)" --identifier "$(BUNDLE_ID)" "$(APP_DIR)"; \
 	else \
