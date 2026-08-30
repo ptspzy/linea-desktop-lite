@@ -137,15 +137,14 @@ private func formattedSpokenList(_ text: String) -> String? {
 
   var items: [String] = []
   for (index, match) in matches.enumerated() {
-    guard let markerRange = Range(match.range(at: 1), in: text),
-          let fullMarkerRange = Range(match.range, in: text) else { return nil }
+    guard let fullMarkerRange = Range(match.range, in: text) else { return nil }
     let itemEnd = index + 1 < matches.count
       ? Range(matches[index + 1].range, in: text)!.lowerBound
       : text.endIndex
     let body = String(text[fullMarkerRange.upperBound..<itemEnd])
       .trimmingCharacters(in: listTrimCharacters)
     guard !body.isEmpty else { return nil }
-    items.append("\(text[markerRange])，\(body)")
+    items.append(body)
   }
 
   return heading + "：\n" + items.enumerated()

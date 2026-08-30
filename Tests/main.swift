@@ -65,8 +65,8 @@ private let commonDictationCases = [
   ),
   DictationCase(
     name: "口述顺序分点",
-    input: "我有三点 第一点是速度 第二点是稳定性 第三点是兼容性",
-    expected: "我有三点：\n1. 第一点是，速度\n2. 第二点是，稳定性\n3. 第三点是，兼容性"
+    input: "我下面说三点：第一点是延迟；第二点是准确率；第三点是稳定性。",
+    expected: "我下面说三点：\n1. 延迟\n2. 准确率\n3. 稳定性"
   ),
   DictationCase(
     name: "紧凑口述分点",
