@@ -20,6 +20,7 @@ private enum QwenRuntimeError: LocalizedError {
   case modelMissing
   case invalidModel
   case emptyTranscript
+  case unstableTranscript
 
   var errorDescription: String? {
     switch self {
@@ -39,6 +40,8 @@ private enum QwenRuntimeError: LocalizedError {
       "The selected Qwen ASR model did not pass verification."
     case .emptyTranscript:
       "Qwen ASR returned no speech."
+    case .unstableTranscript:
+      "Recognition became unstable. Please try again."
     }
   }
 }
@@ -62,15 +65,43 @@ func cleanedQwenOutput(_ value: String) -> String {
   cleanedTranscript(value)
 }
 
+func hasPathologicalRepetition(_ value: String) -> Bool {
+  let characters = Array(value)
+  guard characters.count >= 16 else { return false }
+
+  for start in characters.indices {
+    let maximumUnitLength = min(24, (characters.count - start) / 8)
+    guard maximumUnitLength > 0 else { continue }
+    for unitLength in 1...maximumUnitLength {
+      let requiredRepeats = unitLength == 1 ? 20 : 8
+      var repeats = 1
+      var position = start + unitLength
+      while position + unitLength <= characters.count,
+            characters[start..<(start + unitLength)]
+              .elementsEqual(characters[position..<(position + unitLength)]) {
+        repeats += 1
+        if repeats >= requiredRepeats { return true }
+        position += unitLength
+      }
+    }
+  }
+  return false
+}
+
+private func validatedQwenOutput(_ value: String) throws -> String {
+  let text = cleanedQwenOutput(value)
+  guard !text.isEmpty else { throw QwenRuntimeError.emptyTranscript }
+  guard !hasPathologicalRepetition(text) else { throw QwenRuntimeError.unstableTranscript }
+  return text
+}
+
 func qwenServerTranscript(_ value: String) throws -> String {
   guard let data = value.data(using: .utf8),
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
         let rawText = json["text"] as? String else {
     throw QwenRuntimeError.serverUnavailable
   }
-  let text = cleanedQwenOutput(rawText)
-  guard !text.isEmpty else { throw QwenRuntimeError.emptyTranscript }
-  return text
+  return try validatedQwenOutput(rawText)
 }
 
 func prepareQwen() {
@@ -121,9 +152,7 @@ func transcribeWithQwen(audioURL: URL) throws -> String {
       continue
     }
   }
-  let text = cleanedQwenOutput(mergedTranscriptParts(parts))
-  guard !text.isEmpty else { throw QwenRuntimeError.emptyTranscript }
-  return text
+  return try validatedQwenOutput(mergedTranscriptParts(parts))
 }
 
 private func transcribeSingleWithQwen(audioURL: URL) throws -> String {
@@ -131,6 +160,8 @@ private func transcribeSingleWithQwen(audioURL: URL) throws -> String {
     return try qwenServer.transcribe(audioURL: audioURL)
   } catch QwenRuntimeError.emptyTranscript {
     throw QwenRuntimeError.emptyTranscript
+  } catch QwenRuntimeError.unstableTranscript {
+    throw QwenRuntimeError.unstableTranscript
   } catch {
     qwenServer.stop()
     let (runtimeURL, modelURL) = try qwenRuntimeAndModel()
@@ -139,9 +170,7 @@ private func transcribeSingleWithQwen(audioURL: URL) throws -> String {
       arguments: qwenCommandArguments(modelURL: modelURL, audioURL: audioURL),
       timeout: 180
     )
-    let text = cleanedQwenOutput(output)
-    guard !text.isEmpty else { throw QwenRuntimeError.emptyTranscript }
-    return text
+    return try validatedQwenOutput(output)
   }
 }
 

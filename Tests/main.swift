@@ -30,6 +30,17 @@ expect(
   ]
 )
 expect(cleanedQwenOutput("  最后一句没有缺少。\n") == "最后一句没有缺少。")
+expect(hasPathologicalRepetition(String(repeating: "二零", count: 8)))
+expect(hasPathologicalRepetition(String(repeating: "同一段话 ", count: 8)))
+expect(!hasPathologicalRepetition(String(repeating: "你好", count: 3)))
+do {
+  _ = try qwenServerTranscript(
+    "{\"text\":\"\(String(repeating: "二零", count: 40))\"}"
+  )
+  fail("Pathological ASR repetition should be rejected")
+} catch {
+  expect(error.localizedDescription == "Recognition became unstable. Please try again.")
+}
 expect(
   qwenServerArguments(modelURL: URL(fileURLWithPath: "/models/qwen.gguf"), port: 17_999) == [
     "--server", "--host", "127.0.0.1", "--port", "17999",
