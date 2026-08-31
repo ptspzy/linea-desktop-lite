@@ -1,6 +1,26 @@
+import AVFoundation
 import Foundation
 
 private let maximumCaptureDuration: TimeInterval = 10 * 60
+
+enum CapturePermissionAction: Equatable {
+  case start
+  case request
+  case deny
+}
+
+func capturePermissionAction(for status: AVAuthorizationStatus) -> CapturePermissionAction {
+  switch status {
+  case .authorized:
+    .start
+  case .notDetermined:
+    .request
+  case .denied, .restricted:
+    .deny
+  @unknown default:
+    .deny
+  }
+}
 
 func captureAudioLevel(decibels: Float) -> Double {
   guard decibels > -60 else { return 0 }

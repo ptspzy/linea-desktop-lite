@@ -50,8 +50,9 @@ build/Linea Lite.app
 make run
 ```
 
-macOS will ask for microphone permission on first use. Linea shows a first-run prompt to choose the
-separately supplied `qwen3-asr-0.6b-q4_k.gguf` model (about 602 MiB). The app verifies its exact size
+Linea guides first-run setup in order: choose the separately supplied
+`qwen3-asr-0.6b-q4_k.gguf` model (about 602 MiB), allow microphone access, then allow Accessibility.
+The app verifies the model's exact size
 and SHA-256 before moving it to `~/Library/Application Support/Linea Lite/models/`; an invalid model
 is rejected without removing the selected file. The app and DMG do not contain the model.
 Recognition remains local and uses Qwen only.

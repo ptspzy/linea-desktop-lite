@@ -25,6 +25,25 @@ private struct DictationResult {
   let recognitionDuration: TimeInterval
 }
 
+// Ownership moves from the startup task to the main actor without concurrent access.
+private final class StartedRecording: @unchecked Sendable {
+  let recorder: AVAudioRecorder
+  let url: URL
+  let startedAt: Date
+
+  init(recorder: AVAudioRecorder, url: URL, startedAt: Date) {
+    self.recorder = recorder
+    self.url = url
+    self.startedAt = startedAt
+  }
+}
+
+private struct RecordingStartFailure: LocalizedError, Sendable {
+  let message: String
+
+  var errorDescription: String? { message }
+}
+
 @MainActor
 private final class PushToTalkKey {
   private var globalMonitor: Any?
@@ -133,13 +152,32 @@ private final class DictationEngine {
     }
   }
 
-  func start() throws {
+  func start(
+    _ completion: @escaping @MainActor @Sendable (Result<Void, Error>) -> Void
+  ) {
     guard !isTranscribing else {
-      throw DictationError.busy
+      completion(.failure(DictationError.busy))
+      return
     }
 
     stopRecording()
+    Task.detached(priority: .userInitiated) { [weak self] in
+      do {
+        let recording = try Self.makeStartedRecording()
+        guard let self else {
+          recording.recorder.stop()
+          try? FileManager.default.removeItem(at: recording.url)
+          return
+        }
+        await self.accept(recording)
+        await completion(.success(()))
+      } catch {
+        await completion(.failure(RecordingStartFailure(message: error.localizedDescription)))
+      }
+    }
+  }
 
+  nonisolated private static func makeStartedRecording() throws -> StartedRecording {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("linea-lite-\(UUID().uuidString).wav")
     let settings: [String: Any] = [
@@ -153,13 +191,33 @@ private final class DictationEngine {
 
     let recorder = try AVAudioRecorder(url: url, settings: settings)
     recorder.isMeteringEnabled = true
-    recorder.prepareToRecord()
-    recorder.record()
+    guard recorder.prepareToRecord() else {
+      try? FileManager.default.removeItem(at: url)
+      throw DictationError.noAudio
+    }
+    guard recorder.record() else {
+      try? FileManager.default.removeItem(at: url)
+      throw DictationError.noAudio
+    }
+    return StartedRecording(
+      recorder: recorder,
+      url: url,
+      startedAt: Date()
+    )
+  }
 
-    self.recorder = recorder
-    startedAt = Date()
-    audioURL = url
+  private func accept(_ recording: StartedRecording) {
+    recorder = recording.recorder
+    startedAt = recording.startedAt
+    audioURL = recording.url
     Task.detached(priority: .utility) { prepareQwen() }
+  }
+
+  func cancelRecording() {
+    let url = audioURL
+    stopRecording()
+    audioURL = nil
+    if let url { try? FileManager.default.removeItem(at: url) }
   }
 
   func stopAndTranscribe(_ completion: @escaping (Result<DictationResult, Error>) -> Void) {
@@ -216,6 +274,13 @@ private final class DictationEngine {
     isTranscribing = false
     audioURL = nil
     try? FileManager.default.removeItem(at: url)
+  }
+
+  func shutdown() {
+    let activeURL = audioURL
+    stopRecording()
+    audioURL = nil
+    if let activeURL { try? FileManager.default.removeItem(at: activeURL) }
   }
 }
 
@@ -298,13 +363,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       onPress: { [weak self] in self?.handleShortcutPress() },
       onRelease: { [weak self] in self?.handleShortcutRelease() }
     )
-    prepareAccessibility()
-    DispatchQueue.main.async { [weak self] in
-      self?.promptForModelIfNeeded()
+    if currentQwenModelStatus() == .ready {
+      preparePermissions()
+    } else {
+      DispatchQueue.main.async { [weak self] in
+        self?.promptForModelIfNeeded()
+      }
     }
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    engine.shutdown()
     stopQwen()
   }
 
@@ -370,11 +439,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   func menuWillOpen(_ menu: NSMenu) {
+    historyView.update(entries: history.entries)
     refreshMenu()
   }
 
   private var idleStatus: String {
-    "Tap or hold \(shortcutChoice.title) to dictate"
+    guard currentQwenModelStatus() == .ready else {
+      return "Choose ASR model to dictate"
+    }
+    guard capturePermissionAction(
+      for: AVCaptureDevice.authorizationStatus(for: .audio)
+    ) == .start else {
+      return "Enable microphone to dictate"
+    }
+    guard AXIsProcessTrusted() else {
+      return "Enable Accessibility to use \(shortcutChoice.title)"
+    }
+    return "Tap or hold \(shortcutChoice.title) to dictate"
   }
 
   @objc private func selectShortcut(_ sender: NSMenuItem) {
@@ -415,7 +496,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   private func startDictation() {
-    guard !engine.isBusy, !isStarting else { return }
+    guard !engine.isBusy, !isStarting else {
+      shortcut.reset()
+      status = "Finishing previous dictation..."
+      refreshMenu()
+      return
+    }
     guard currentQwenModelStatus() == .ready else {
       shortcut.reset()
       promptForModelIfNeeded(force: true)
@@ -423,36 +509,62 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     }
     isStarting = true
     targetAppName = NSWorkspace.shared.frontmostApplication?.localizedName
-    hud.showRecording()
-    status = "Requesting permission..."
-    refreshMenu()
+    switch capturePermissionAction(for: AVCaptureDevice.authorizationStatus(for: .audio)) {
+    case .start:
+      hud.showRecording()
+      status = "Starting recording..."
+      refreshMenu()
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
+        self?.beginRecording()
+      }
+    case .request:
+      hud.showRecording()
+      status = "Allow microphone access..."
+      refreshMenu()
+      engine.requestAccess { [weak self] allowed in
+        guard let self else { return }
+        allowed ? self.beginRecording() : self.finishMicrophoneDenied()
+      }
+    case .deny:
+      finishMicrophoneDenied()
+    }
+  }
 
-    engine.requestAccess { [weak self] allowed in
+  private func beginRecording() {
+    guard shortcut.wantsRecording else {
+      isStarting = false
+      targetAppName = nil
+      status = idleStatus
+      hud.hide()
+      refreshMenu()
+      return
+    }
+
+    engine.start { [weak self] result in
       guard let self else { return }
       self.isStarting = false
-      guard allowed else {
-        self.shortcut.reset()
-        self.targetAppName = nil
-        self.status = "Microphone permission denied"
-        self.hud.showError()
-        self.refreshMenu()
-        return
-      }
-      guard self.shortcut.wantsRecording else {
-        self.targetAppName = nil
-        self.status = self.idleStatus
-        self.hud.hide()
-        self.refreshMenu()
-        return
-      }
-
-      do {
-        try self.engine.start()
+      switch result {
+      case .success:
+        guard self.shortcut.wantsRecording else {
+          self.engine.cancelRecording()
+          self.targetAppName = nil
+          self.status = self.idleStatus
+          self.hud.hide()
+          self.refreshMenu()
+          return
+        }
         self.status = self.shortcut.isLatched
           ? "Recording; tap \(self.shortcutChoice.title) to stop"
           : "Recording..."
         self.startLevelUpdates()
-      } catch {
+      case .failure(let error):
+        guard self.shortcut.wantsRecording else {
+          self.targetAppName = nil
+          self.status = self.idleStatus
+          self.hud.hide()
+          self.refreshMenu()
+          return
+        }
         self.shortcut.reset()
         self.targetAppName = nil
         self.status = error.localizedDescription
@@ -460,6 +572,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       }
       self.refreshMenu()
     }
+  }
+
+  private func finishMicrophoneDenied() {
+    isStarting = false
+    shortcut.reset()
+    targetAppName = nil
+    status = "Microphone permission denied"
+    hud.showError()
+    refreshMenu()
   }
 
   private func finishDictation() {
@@ -473,7 +594,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     stopLevelUpdates()
     hud.showProcessing()
     status = "Transcribing..."
-    refreshMenu()
 
     engine.stopAndTranscribe { [weak self] result in
       DispatchQueue.main.async {
@@ -530,6 +650,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         self.refreshMenu()
       }
     }
+    refreshMenu()
   }
 
   private func insertAtCursor(_ text: String) -> Bool {
@@ -586,6 +707,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     NSApp.activate(ignoringOtherApps: true)
     if alert.runModal() == .alertFirstButtonReturn {
       chooseModel(nil)
+    } else {
+      preparePermissions()
     }
   }
 
@@ -602,7 +725,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       panel.allowedContentTypes = [ggufType]
     }
     NSApp.activate(ignoringOtherApps: true)
-    guard panel.runModal() == .OK, let sourceURL = panel.url else { return }
+    guard panel.runModal() == .OK, let sourceURL = panel.url else {
+      preparePermissions()
+      return
+    }
     beginModelImport(from: sourceURL)
   }
 
@@ -660,25 +786,36 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
   private func finishModelImport(errorMessage: String?) {
     isImportingModel = false
-    let alert = NSAlert()
     if let errorMessage {
       status = "ASR model import failed"
       hud.showError()
+      let alert = NSAlert()
       alert.messageText = "Could not use this model"
       alert.informativeText = errorMessage
       alert.addButton(withTitle: "OK")
-    } else {
-      status = AXIsProcessTrusted()
-        ? idleStatus
-        : "Model ready; enable Accessibility"
-      hud.showComplete()
-      alert.messageText = "Speech model is ready"
-      alert.informativeText = "Tap or hold \(shortcutChoice.title) in any app to dictate."
-      alert.addButton(withTitle: "Done")
+      refreshMenu()
+      NSApp.activate(ignoringOtherApps: true)
+      alert.runModal()
+      return
     }
+
+    status = "Speech model ready"
+    hud.showComplete()
     refreshMenu()
-    NSApp.activate(ignoringOtherApps: true)
-    alert.runModal()
+    preparePermissions()
+  }
+
+  private func preparePermissions() {
+    switch capturePermissionAction(for: AVCaptureDevice.authorizationStatus(for: .audio)) {
+    case .request:
+      status = "Allow microphone access..."
+      refreshMenu()
+      engine.requestAccess { [weak self] _ in
+        self?.prepareAccessibility()
+      }
+    case .start, .deny:
+      prepareAccessibility()
+    }
   }
 
   @objc private func chooseWorkspace(_ sender: Any?) {
@@ -826,9 +963,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   private func refreshMenu() {
-    statusItem.button?.title = shortcut.wantsRecording || engine.isRecording
-      ? "● Linea"
-      : "Linea \(history.entries.count)"
+    if shortcut.wantsRecording || engine.isRecording {
+      statusItem.button?.title = "● Linea"
+    } else if engine.isBusy || isStarting {
+      statusItem.button?.title = "… Linea"
+    } else {
+      statusItem.button?.title = "Linea \(history.entries.count)"
+    }
     statusMenuItem.title = status
     shortcutMenuItem.title = "Shortcut: \(shortcutChoice.title)"
     shortcutMenuItem.isEnabled = !engine.isBusy && !isStarting
@@ -868,7 +1009,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       ?? "Workspace: None"
     clearWorkspaceMenuItem.isEnabled = workspaceURL != nil
     clearHistoryMenuItem.isEnabled = !history.entries.isEmpty
-    historyView.update(entries: history.entries)
   }
 }
 
