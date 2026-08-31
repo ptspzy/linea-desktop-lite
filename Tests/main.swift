@@ -240,8 +240,13 @@ expect(tapShortcut.release(at: 1.1) == nil)
 
 var holdShortcut = DictationShortcutState()
 expect(holdShortcut.press(at: 0) == .start)
-expect(holdShortcut.release(at: 0.5) == .stop)
-expect(!holdShortcut.wantsRecording)
+expect(holdShortcut.release(at: 0.5) == .continueRecording)
+expect(holdShortcut.isLatched)
+
+var deliberateHoldShortcut = DictationShortcutState()
+expect(deliberateHoldShortcut.press(at: 0) == .start)
+expect(deliberateHoldShortcut.release(at: 0.8) == .stop)
+expect(!deliberateHoldShortcut.wantsRecording)
 
 expect(captureAudioLevel(decibels: -160) == 0)
 expect((0.50...0.55).contains(captureAudioLevel(decibels: -20)))

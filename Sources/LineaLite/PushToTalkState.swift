@@ -50,7 +50,7 @@ enum DictationShortcutAction {
 }
 
 struct DictationShortcutState {
-  private static let tapThreshold = 0.3
+  private static let tapThreshold = 0.6
   private var pressedAt: Double?
   private(set) var isLatched = false
 
