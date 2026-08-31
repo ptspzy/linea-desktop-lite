@@ -314,9 +314,47 @@ for term in ["Qwen3-ASR", "0.6B", "4-bit", "MLX", "balanced"] {
 }
 try FileManager.default.removeItem(at: workspaceURL)
 
-expect(qwenModelStatus(modelIsValid: false, partialBytes: nil, totalBytes: 100) == .missing)
-expect(qwenModelStatus(modelIsValid: false, partialBytes: 48, totalBytes: 100) == .downloading(48))
-expect(qwenModelStatus(modelIsValid: true, partialBytes: nil, totalBytes: 100) == .ready)
+let modelImportDirectory = FileManager.default.temporaryDirectory
+  .appendingPathComponent("linea-lite-model-import-\(UUID().uuidString)")
+try FileManager.default.createDirectory(at: modelImportDirectory, withIntermediateDirectories: true)
+let modelSourceURL = modelImportDirectory.appendingPathComponent("supplied.gguf")
+let modelDestinationURL = modelImportDirectory.appendingPathComponent("installed/model.gguf")
+let modelReceiptURL = modelDestinationURL.deletingLastPathComponent()
+  .appendingPathComponent("verified.sha256")
+let testModelSHA256 = "9372c470eeadd5ecd9c3c74c2b3cb633f8e2f2fad799250a0f70d652b6b825e4"
+try Data("model".utf8).write(to: modelSourceURL)
+try installVerifiedModel(
+  from: modelSourceURL,
+  to: modelDestinationURL,
+  receiptURL: modelReceiptURL,
+  expectedSize: 5,
+  expectedSHA256: testModelSHA256
+)
+expect(!FileManager.default.fileExists(atPath: modelSourceURL.path))
+let installedTestModel = try Data(contentsOf: modelDestinationURL)
+let installedTestReceipt = try String(contentsOf: modelReceiptURL, encoding: .utf8)
+expect(installedTestModel == Data("model".utf8))
+expect(installedTestReceipt == testModelSHA256)
+
+let invalidModelURL = modelImportDirectory.appendingPathComponent("invalid.gguf")
+let rejectedDestinationURL = modelImportDirectory.appendingPathComponent("rejected/model.gguf")
+try Data("wrong".utf8).write(to: invalidModelURL)
+do {
+  try installVerifiedModel(
+    from: invalidModelURL,
+    to: rejectedDestinationURL,
+    receiptURL: rejectedDestinationURL.deletingLastPathComponent()
+      .appendingPathComponent("verified.sha256"),
+    expectedSize: 5,
+    expectedSHA256: testModelSHA256
+  )
+  fail("Invalid model should be rejected")
+} catch {
+  expect(error.localizedDescription.contains("verification"), error.localizedDescription)
+}
+expect(FileManager.default.fileExists(atPath: invalidModelURL.path))
+expect(!FileManager.default.fileExists(atPath: rejectedDestinationURL.path))
+try FileManager.default.removeItem(at: modelImportDirectory)
 
 let historyURL = FileManager.default.temporaryDirectory
   .appendingPathComponent("linea-lite-tests-\(UUID().uuidString)/history.json")

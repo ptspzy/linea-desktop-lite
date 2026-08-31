@@ -47,9 +47,10 @@ build/Linea Lite.app
 make run
 ```
 
-macOS will ask for microphone permission on first use. Linea shows a first-run prompt to download the
-SHA-256-pinned Qwen3-ASR model (about 602 MiB) to `~/Library/Application Support/Linea Lite/models/`,
-with progress in its menu; the app and DMG do not contain the model.
+macOS will ask for microphone permission on first use. Linea shows a first-run prompt to choose the
+separately supplied `qwen3-asr-0.6b-q4_k.gguf` model (about 602 MiB). The app verifies its exact size
+and SHA-256 before moving it to `~/Library/Application Support/Linea Lite/models/`; an invalid model
+is rejected without removing the selected file. The app and DMG do not contain the model.
 Recognition remains local and uses Qwen only.
 Accessibility permission is needed for right-Option detection and automatic paste. Once it is enabled, Linea starts listening without a restart.
 Transcript text, time, duration, and target-app name are stored locally in `~/Library/Application Support/Linea Lite/history.json`.

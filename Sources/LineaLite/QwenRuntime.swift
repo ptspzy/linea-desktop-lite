@@ -4,25 +4,11 @@ import Darwin
 private let qwenModelName = "qwen3-asr-0.6b-q4_k.gguf"
 private let qwenModelSHA256 = "f63771c02dfa486d9399d41ab6ab8cd2d8ca24e077cd32130ea1f67f4fd8dade"
 private let qwenModelSize = 631_026_336
-private let qwenModelDownloadURL = URL(
-  string: "https://huggingface.co/cstr/qwen3-asr-0.6b-GGUF/resolve/79aa968855efd924b8dd6dde3deee949b9e7f052/\(qwenModelName)?download=true"
-)!
 private let qwenServer = QwenServer()
 
 enum QwenModelStatus: Equatable {
   case missing
-  case downloading(Int)
   case ready
-}
-
-func qwenModelStatus(
-  modelIsValid: Bool,
-  partialBytes: Int?,
-  totalBytes: Int
-) -> QwenModelStatus {
-  if modelIsValid { return .ready }
-  guard let partialBytes, partialBytes > 0, totalBytes > 0 else { return .missing }
-  return .downloading(min(100, partialBytes * 100 / totalBytes))
 }
 
 private enum QwenRuntimeError: LocalizedError {
@@ -30,6 +16,7 @@ private enum QwenRuntimeError: LocalizedError {
   case processFailed(String, Int32, String)
   case processTimedOut(String)
   case serverUnavailable
+  case modelMissing
   case invalidModel
   case emptyTranscript
 
@@ -45,8 +32,10 @@ private enum QwenRuntimeError: LocalizedError {
       "\(name) timed out."
     case .serverUnavailable:
       "Qwen ASR server is unavailable."
+    case .modelMissing:
+      "Choose the Qwen3-ASR model before dictating."
     case .invalidModel:
-      "The downloaded Qwen ASR model did not pass verification."
+      "The selected Qwen ASR model did not pass verification."
     case .emptyTranscript:
       "Qwen ASR returned no speech."
     }
@@ -93,16 +82,20 @@ func stopQwen() {
 
 func currentQwenModelStatus() -> QwenModelStatus {
   let locations = qwenModelLocations()
-  let partialBytes = try? locations.partialURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
-  return qwenModelStatus(
-    modelIsValid: validModel(at: locations.modelURL, receiptURL: locations.receiptURL),
-    partialBytes: partialBytes,
-    totalBytes: qwenModelSize
-  )
+  return validModel(at: locations.modelURL, receiptURL: locations.receiptURL)
+    ? .ready
+    : .missing
 }
 
-func installQwenModel() throws {
-  _ = try ensureQwenModel()
+func installQwenModel(from sourceURL: URL) throws {
+  let locations = qwenModelLocations()
+  try installVerifiedModel(
+    from: sourceURL,
+    to: locations.modelURL,
+    receiptURL: locations.receiptURL,
+    expectedSize: qwenModelSize,
+    expectedSHA256: qwenModelSHA256
+  )
 }
 
 func transcribeWithQwen(audioURL: URL) throws -> String {
@@ -222,60 +215,75 @@ private final class QwenServer: @unchecked Sendable {
 
 private func ensureQwenModel() throws -> URL {
   let locations = qwenModelLocations()
-  let directory = locations.modelURL.deletingLastPathComponent()
-  let modelURL = locations.modelURL
-  let receiptURL = locations.receiptURL
-  let partialURL = locations.partialURL
-
-  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  if validModel(at: modelURL, receiptURL: receiptURL) {
-    try? qwenModelSHA256.write(to: receiptURL, atomically: true, encoding: .utf8)
-    return modelURL
+  if validModel(at: locations.modelURL, receiptURL: locations.receiptURL) {
+    try? qwenModelSHA256.write(to: locations.receiptURL, atomically: true, encoding: .utf8)
+    return locations.modelURL
   }
-
-  try? FileManager.default.removeItem(at: modelURL)
-  try? FileManager.default.removeItem(at: receiptURL)
-  if !validModel(at: partialURL, receiptURL: nil) {
-    _ = try processOutput(
-      executableURL: URL(fileURLWithPath: "/usr/bin/curl"),
-      arguments: [
-        "--location", "--fail", "--silent", "--show-error", "--continue-at", "-",
-        "--output", partialURL.path, qwenModelDownloadURL.absoluteString,
-      ]
-    )
+  guard FileManager.default.fileExists(atPath: locations.modelURL.path) else {
+    throw QwenRuntimeError.modelMissing
   }
-  guard validModel(at: partialURL, receiptURL: nil) else {
+  throw QwenRuntimeError.invalidModel
+}
+
+func installVerifiedModel(
+  from sourceURL: URL,
+  to destinationURL: URL,
+  receiptURL: URL,
+  expectedSize: Int,
+  expectedSHA256: String
+) throws {
+  guard validModel(
+    at: sourceURL,
+    receiptURL: nil,
+    expectedSize: expectedSize,
+    expectedSHA256: expectedSHA256
+  ) else {
     throw QwenRuntimeError.invalidModel
   }
 
-  try FileManager.default.moveItem(at: partialURL, to: modelURL)
-  try qwenModelSHA256.write(to: receiptURL, atomically: true, encoding: .utf8)
-  return modelURL
+  let fileManager = FileManager.default
+  let sourceURL = sourceURL.standardizedFileURL
+  let destinationURL = destinationURL.standardizedFileURL
+  let directory = destinationURL.deletingLastPathComponent()
+  try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+  if sourceURL != destinationURL {
+    if fileManager.fileExists(atPath: destinationURL.path) {
+      try fileManager.removeItem(at: destinationURL)
+    }
+    try fileManager.moveItem(at: sourceURL, to: destinationURL)
+  }
+  try? expectedSHA256.write(to: receiptURL, atomically: true, encoding: .utf8)
 }
 
-private func qwenModelLocations() -> (modelURL: URL, receiptURL: URL, partialURL: URL) {
+private func qwenModelLocations() -> (modelURL: URL, receiptURL: URL) {
   let directory = FileManager.default
     .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     .appendingPathComponent("Linea Lite/models/qwen3-asr-0.6b-q4-k/\(qwenModelSHA256)")
   return (
     directory.appendingPathComponent(qwenModelName),
-    directory.appendingPathComponent("verified.sha256"),
-    directory.appendingPathComponent(qwenModelName + ".part")
+    directory.appendingPathComponent("verified.sha256")
   )
 }
 
-private func validModel(at url: URL, receiptURL: URL?) -> Bool {
-  guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-        size == qwenModelSize else { return false }
+private func validModel(
+  at url: URL,
+  receiptURL: URL?,
+  expectedSize: Int = qwenModelSize,
+  expectedSHA256: String = qwenModelSHA256
+) -> Bool {
+  guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+        values.isRegularFile == true,
+        values.fileSize == expectedSize else { return false }
   if let receiptURL,
-     (try? String(contentsOf: receiptURL, encoding: .utf8)) == qwenModelSHA256 {
+     (try? String(contentsOf: receiptURL, encoding: .utf8)) == expectedSHA256 {
     return true
   }
   guard let output = try? processOutput(
     executableURL: URL(fileURLWithPath: "/usr/bin/shasum"),
     arguments: ["-a", "256", url.path]
   ) else { return false }
-  return output.hasPrefix(qwenModelSHA256)
+  return output.hasPrefix(expectedSHA256)
 }
 
 func processOutput(

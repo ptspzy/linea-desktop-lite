@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
+import UniformTypeIdentifiers
 
 private let pasteKeyCode: CGKeyCode = 9
 
@@ -192,8 +193,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private var levelTimer: Timer?
   private var targetAppName: String?
   private var isStarting = false
-  private var isDownloadingModel = false
-  private var modelProgressTimer: Timer?
+  private var isImportingModel = false
   private var hasPromptedForModel = false
   private var workspaceURL: URL?
   private var workspaceVocabulary: [WorkspaceVocabularyEntry] = []
@@ -202,8 +202,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
   private let statusMenuItem = NSMenuItem()
   private let modelMenuItem = NSMenuItem(
-    title: "Download ASR Model...",
-    action: #selector(downloadModel(_:)),
+    title: "Choose ASR Model...",
+    action: #selector(chooseModel(_:)),
     keyEquivalent: ""
   )
   private let workspaceStatusMenuItem = NSMenuItem()
@@ -458,60 +458,77 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     refreshMenu()
   }
 
-  @objc private func downloadModel(_ sender: Any?) {
-    beginModelDownload()
-  }
-
   private func promptForModelIfNeeded(force: Bool = false) {
     guard currentQwenModelStatus() != .ready, force || !hasPromptedForModel else { return }
     hasPromptedForModel = true
 
     let alert = NSAlert()
-    alert.messageText = "Download local speech model?"
-    alert.informativeText = "Linea Lite needs the Qwen3-ASR model (about 602 MB). It is downloaded once and speech recognition stays on this Mac."
-    alert.addButton(withTitle: "Download")
+    alert.messageText = "Choose the local speech model"
+    alert.informativeText = "Select the supplied Qwen3-ASR model (about 602 MB). Linea verifies it, moves it into local app storage, and keeps speech recognition on this Mac."
+    alert.addButton(withTitle: "Choose Model")
     alert.addButton(withTitle: "Later")
     NSApp.activate(ignoringOtherApps: true)
     if alert.runModal() == .alertFirstButtonReturn {
-      beginModelDownload()
+      chooseModel(nil)
     }
   }
 
-  private func beginModelDownload() {
-    guard !isDownloadingModel, currentQwenModelStatus() != .ready else { return }
-    isDownloadingModel = true
-    status = "Downloading local ASR model..."
-    startModelProgressUpdates()
-    refreshMenu()
+  @objc private func chooseModel(_ sender: Any?) {
+    guard !isImportingModel else { return }
+    let panel = NSOpenPanel()
+    panel.title = "Choose Qwen3-ASR Model"
+    panel.message = "Select qwen3-asr-0.6b-q4_k.gguf. It will be verified and moved into Linea Lite."
+    panel.prompt = "Use Model"
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    if let ggufType = UTType(filenameExtension: "gguf") {
+      panel.allowedContentTypes = [ggufType]
+    }
+    NSApp.activate(ignoringOtherApps: true)
+    guard panel.runModal() == .OK, let sourceURL = panel.url else { return }
+    beginModelImport(from: sourceURL)
+  }
 
+  private func beginModelImport(from sourceURL: URL) {
+    isImportingModel = true
+    status = "Verifying local ASR model..."
+    hud.showProcessing()
+    refreshMenu()
     Task { [weak self] in
       let errorMessage = await Task.detached(priority: .utility) {
         do {
-          try installQwenModel()
+          try installQwenModel(from: sourceURL)
           return nil as String?
         } catch {
           return error.localizedDescription
         }
       }.value
-      self?.finishModelDownload(errorMessage: errorMessage)
+      self?.finishModelImport(errorMessage: errorMessage)
     }
   }
 
-  private func startModelProgressUpdates() {
-    modelProgressTimer?.invalidate()
-    let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
-      MainActor.assumeIsolated { self?.refreshMenu() }
+  private func finishModelImport(errorMessage: String?) {
+    isImportingModel = false
+    let alert = NSAlert()
+    if let errorMessage {
+      status = "ASR model import failed"
+      hud.showError()
+      alert.messageText = "Could not use this model"
+      alert.informativeText = errorMessage
+      alert.addButton(withTitle: "OK")
+    } else {
+      status = AXIsProcessTrusted()
+        ? "Tap or hold Right Option to dictate"
+        : "Model ready; enable Accessibility"
+      hud.showComplete()
+      alert.messageText = "Speech model is ready"
+      alert.informativeText = "Tap or hold Right Option in any app to dictate."
+      alert.addButton(withTitle: "Done")
     }
-    modelProgressTimer = timer
-    RunLoop.main.add(timer, forMode: .common)
-  }
-
-  private func finishModelDownload(errorMessage: String?) {
-    modelProgressTimer?.invalidate()
-    modelProgressTimer = nil
-    isDownloadingModel = false
-    status = errorMessage ?? "ASR model ready"
     refreshMenu()
+    NSApp.activate(ignoringOtherApps: true)
+    alert.runModal()
   }
 
   @objc private func chooseWorkspace(_ sender: Any?) {
@@ -613,13 +630,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       modelMenuItem.title = "ASR Model: Ready"
       modelMenuItem.isEnabled = false
     case .missing:
-      modelMenuItem.title = isDownloadingModel ? "Downloading ASR Model..." : "Download ASR Model (602 MB)..."
-      modelMenuItem.isEnabled = !isDownloadingModel
-    case .downloading(let percent):
-      modelMenuItem.title = isDownloadingModel
-        ? "Downloading ASR Model: \(percent)%"
-        : "Resume ASR Model Download: \(percent)%..."
-      modelMenuItem.isEnabled = !isDownloadingModel
+      modelMenuItem.title = isImportingModel ? "Verifying ASR Model..." : "Choose ASR Model..."
+      modelMenuItem.isEnabled = !isImportingModel
     }
     workspaceStatusMenuItem.title = workspaceURL.map { "Workspace: \($0.lastPathComponent)" }
       ?? "Workspace: None"
