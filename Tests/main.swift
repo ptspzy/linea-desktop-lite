@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 
 @inline(never)
@@ -210,9 +211,12 @@ expect(pushToTalk.transition(to: true) == nil)
 expect(pushToTalk.transition(to: false) == .released)
 expect(!pushToTalk.isPressed)
 
-expect(rightOptionPressed(keyCode: 58, optionPressed: true) == nil)
-expect(rightOptionPressed(keyCode: 61, optionPressed: true) == true)
-expect(rightOptionPressed(keyCode: 61, optionPressed: false) == false)
+expect(modifierKeyPressed(keyCode: 58, isPressed: true, shortcut: .rightOption) == nil)
+expect(modifierKeyPressed(keyCode: 61, isPressed: true, shortcut: .rightOption) == true)
+expect(modifierKeyPressed(keyCode: 61, isPressed: false, shortcut: .rightOption) == false)
+expect(modifierKeyPressed(keyCode: 62, isPressed: true, shortcut: .rightControl) == true)
+expect(modifierKeyPressed(keyCode: 54, isPressed: true, shortcut: .rightCommand) == true)
+expect(PushToTalkShortcut.allCases.map(\.title) == ["Right Option", "Right Control", "Right Command"])
 
 var tapShortcut = DictationShortcutState()
 expect(tapShortcut.press(at: 0) == .start)
@@ -233,6 +237,58 @@ expect((0.50...0.55).contains(captureAudioLevel(decibels: -20)))
 expect(captureAudioLevel(decibels: 0) == 1)
 expect(!captureShouldAutomaticallyStop(duration: 599.9))
 expect(captureShouldAutomaticallyStop(duration: 600))
+
+var longAudioSamples = Array(repeating: Float(0.5), count: 1_400)
+for index in 440..<460 { longAudioSamples[index] = 0 }
+for index in 890..<910 { longAudioSamples[index] = 0 }
+let longAudioSegments = silenceAwareSegmentRanges(
+  samples: longAudioSamples,
+  sampleRate: 10,
+  targetDuration: 45,
+  maximumDuration: 60,
+  searchDuration: 6,
+  overlapDuration: 1
+)
+expect(longAudioSegments.count == 3, "Expected three long-audio segments: \(longAudioSegments)")
+expect(longAudioSegments[0].upperBound > 430 && longAudioSegments[0].upperBound < 470)
+expect(longAudioSegments[1].lowerBound == longAudioSegments[0].upperBound - 10)
+expect(longAudioSegments.last?.upperBound == longAudioSamples.count)
+expect(
+  silenceAwareSegmentRanges(samples: Array(repeating: 0.5, count: 300), sampleRate: 10)
+    == [0..<300]
+)
+expect(
+  mergedTranscriptParts(["第一句最后内容", "最后内容第二句", "第二句完成"])
+    == "第一句最后内容第二句完成"
+)
+
+let longAudioURL = FileManager.default.temporaryDirectory
+  .appendingPathComponent("linea-lite-long-audio-\(UUID().uuidString).wav")
+let longAudioFormat = AVAudioFormat(
+  commonFormat: .pcmFormatFloat32,
+  sampleRate: 8_000,
+  channels: 1,
+  interleaved: false
+)!
+let longAudioBuffer = AVAudioPCMBuffer(pcmFormat: longAudioFormat, frameCapacity: 560_000)!
+longAudioBuffer.frameLength = 560_000
+for index in 0..<560_000 {
+  longAudioBuffer.floatChannelData![0][index] = (352_000..<368_000).contains(index) ? 0 : 0.5
+}
+do {
+  let longAudioFile = try AVAudioFile(forWriting: longAudioURL, settings: longAudioFormat.settings)
+  try longAudioFile.write(from: longAudioBuffer)
+}
+let writtenSegments = try recognitionAudioSegments(at: longAudioURL)
+expect(
+  writtenSegments.count == 2,
+  "Expected two written audio segments, got \(writtenSegments.count)"
+)
+let writtenSegmentFrames = try writtenSegments.map { try AVAudioFile(forReading: $0).length }
+expect(writtenSegmentFrames.allSatisfy { $0 <= 480_000 })
+expect(writtenSegmentFrames.reduce(0, +) >= 560_000, "Overlap should preserve the full recording")
+for url in writtenSegments { try FileManager.default.removeItem(at: url) }
+try FileManager.default.removeItem(at: longAudioURL)
 
 let captureDirectory = FileManager.default.temporaryDirectory
   .appendingPathComponent("linea-lite-capture-cleanup-\(UUID().uuidString)")

@@ -16,8 +16,8 @@ private func editDistance(_ lhs: [Character], _ rhs: [Character]) -> Int {
   return previous[rhs.count]
 }
 
-guard CommandLine.arguments.count >= 4 else {
-  fputs("usage: quality-check RAW REFERENCE REQUIRED_TERM...\n", stderr)
+guard CommandLine.arguments.count >= 3 else {
+  fputs("usage: quality-check RAW REFERENCE [REQUIRED_TERM...]\n", stderr)
   exit(2)
 }
 
@@ -32,6 +32,7 @@ let finalText = formattedTranscript(
 let missingTerms = requiredTerms.filter { !finalText.contains($0) }
 let distance = editDistance(Array(finalText), Array(reference))
 let cer = Double(distance) / Double(max(1, reference.count))
+let maximumCER = Double(ProcessInfo.processInfo.environment["LINEA_MAX_CER"] ?? "") ?? 0.20
 
 print(finalText)
 fputs(String(format: "CER %.4f\n", cer), stderr)
@@ -39,7 +40,7 @@ guard missingTerms.isEmpty else {
   fputs("Missing terms: \(missingTerms.joined(separator: ", "))\n", stderr)
   exit(1)
 }
-guard cer <= 0.20 else {
-  fputs(String(format: "CER %.4f exceeds 0.20\n", cer), stderr)
+guard cer <= maximumCER else {
+  fputs(String(format: "CER %.4f exceeds %.2f\n", cer, maximumCER), stderr)
   exit(1)
 }

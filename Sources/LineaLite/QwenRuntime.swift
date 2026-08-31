@@ -4,6 +4,7 @@ import Darwin
 private let qwenModelName = "qwen3-asr-0.6b-q4_k.gguf"
 private let qwenModelSHA256 = "f63771c02dfa486d9399d41ab6ab8cd2d8ca24e077cd32130ea1f67f4fd8dade"
 private let qwenModelSize = 631_026_336
+private let qwenIdleTimeout: TimeInterval = 300
 private let qwenServer = QwenServer()
 
 enum QwenModelStatus: Equatable {
@@ -87,6 +88,13 @@ func currentQwenModelStatus() -> QwenModelStatus {
     : .missing
 }
 
+func installedQwenModelURL() -> URL? {
+  let locations = qwenModelLocations()
+  return validModel(at: locations.modelURL, receiptURL: locations.receiptURL)
+    ? locations.modelURL
+    : nil
+}
+
 func installQwenModel(from sourceURL: URL) throws {
   let locations = qwenModelLocations()
   try installVerifiedModel(
@@ -99,11 +107,32 @@ func installQwenModel(from sourceURL: URL) throws {
 }
 
 func transcribeWithQwen(audioURL: URL) throws -> String {
+  let audioURLs = try recognitionAudioSegments(at: audioURL)
+  defer {
+    for url in audioURLs where url != audioURL {
+      try? FileManager.default.removeItem(at: url)
+    }
+  }
+  var parts: [String] = []
+  for url in audioURLs {
+    do {
+      parts.append(try transcribeSingleWithQwen(audioURL: url))
+    } catch QwenRuntimeError.emptyTranscript {
+      continue
+    }
+  }
+  let text = cleanedQwenOutput(mergedTranscriptParts(parts))
+  guard !text.isEmpty else { throw QwenRuntimeError.emptyTranscript }
+  return text
+}
+
+private func transcribeSingleWithQwen(audioURL: URL) throws -> String {
   do {
     return try qwenServer.transcribe(audioURL: audioURL)
   } catch QwenRuntimeError.emptyTranscript {
     throw QwenRuntimeError.emptyTranscript
   } catch {
+    qwenServer.stop()
     let (runtimeURL, modelURL) = try qwenRuntimeAndModel()
     let output = try processOutput(
       executableURL: runtimeURL,
@@ -132,9 +161,11 @@ private final class QwenServer: @unchecked Sendable {
   private let queue = DispatchQueue(label: "io.github.linea.qwen-server")
   private let port = 30_000 + Int(getpid() % 10_000)
   private var process: Process?
+  private var idleStopWorkItem: DispatchWorkItem?
 
   func prepare() throws {
     try queue.sync {
+      defer { scheduleStopLocked() }
       let (runtimeURL, modelURL) = try qwenRuntimeAndModel()
       try startIfNeeded(runtimeURL: runtimeURL, modelURL: modelURL)
     }
@@ -142,7 +173,7 @@ private final class QwenServer: @unchecked Sendable {
 
   func transcribe(audioURL: URL) throws -> String {
     try queue.sync {
-      defer { stopLocked() }
+      defer { scheduleStopLocked() }
       let (runtimeURL, modelURL) = try qwenRuntimeAndModel()
       try startIfNeeded(runtimeURL: runtimeURL, modelURL: modelURL)
       let output = try processOutput(
@@ -196,6 +227,8 @@ private final class QwenServer: @unchecked Sendable {
   }
 
   private func stopLocked() {
+    idleStopWorkItem?.cancel()
+    idleStopWorkItem = nil
     guard let process else { return }
     self.process = nil
     guard process.isRunning else {
@@ -210,6 +243,13 @@ private final class QwenServer: @unchecked Sendable {
     }
     if process.isRunning { kill(pid, SIGKILL) }
     process.waitUntilExit()
+  }
+
+  private func scheduleStopLocked() {
+    idleStopWorkItem?.cancel()
+    let workItem = DispatchWorkItem { [weak self] in self?.stopLocked() }
+    idleStopWorkItem = workItem
+    queue.asyncAfter(deadline: .now() + qwenIdleTimeout, execute: workItem)
   }
 }
 

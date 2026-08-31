@@ -15,11 +15,11 @@ ARM_QWEN_ASR_BIN ?= .runtime/macos-arm64/qwen-asr
 X86_QWEN_ASR_BIN ?= .runtime/macos-x86_64/qwen-asr
 ARM_APP_BIN := $(BUILD_DIR)/$(APP_NAME)-arm64
 X86_APP_BIN := $(BUILD_DIR)/$(APP_NAME)-x86_64
-SOURCES := Sources/LineaLite/CaptureHUD.swift Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/HistoryMenuView.swift Sources/LineaLite/HistoryStore.swift Sources/LineaLite/PasteboardSupport.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/QwenRuntime.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/WorkspaceVocabulary.swift Sources/LineaLite/main.swift
-TEST_SOURCES := Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/HistoryStore.swift Sources/LineaLite/PasteboardSupport.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/QwenRuntime.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/WorkspaceVocabulary.swift Tests/main.swift
-COVERAGE_SOURCES := Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/HistoryStore.swift Sources/LineaLite/PasteboardSupport.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/QwenRuntime.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/WorkspaceVocabulary.swift
+SOURCES := Sources/LineaLite/AudioSegmentation.swift Sources/LineaLite/CaptureHUD.swift Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/HistoryMenuView.swift Sources/LineaLite/HistoryStore.swift Sources/LineaLite/PasteboardSupport.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/QwenRuntime.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/WorkspaceVocabulary.swift Sources/LineaLite/main.swift
+TEST_SOURCES := Sources/LineaLite/AudioSegmentation.swift Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/HistoryStore.swift Sources/LineaLite/PasteboardSupport.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/QwenRuntime.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/WorkspaceVocabulary.swift Tests/main.swift
+COVERAGE_SOURCES := Sources/LineaLite/AudioSegmentation.swift Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/HistoryStore.swift Sources/LineaLite/PasteboardSupport.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/QwenRuntime.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/WorkspaceVocabulary.swift
 
-.PHONY: build build-universal compile-check coverage lint run test test-quality test-quality-x86 smoke verify package release runtime-arm64 runtime-x86_64 runtimes clean
+.PHONY: build build-universal compile-check coverage lint run test test-quality test-quality-corpus test-quality-x86 smoke verify package release runtime-arm64 runtime-x86_64 runtimes clean
 
 build:
 	test -x "$(QWEN_ASR_BIN)"
@@ -87,6 +87,13 @@ smoke:
 test-quality:
 	./scripts/test-real-model.sh "$(APP_DIR)"
 
+test-quality-corpus:
+	@if test -f "$(HOME)/Library/Application Support/local-voice-dictation-stable/benchmarks/human-reference.jsonl"; then \
+		LINEA_QUALITY_MANIFEST="$(HOME)/Library/Application Support/local-voice-dictation-stable/benchmarks/human-reference.jsonl" ./scripts/test-real-model.sh "$(APP_DIR)"; \
+	else \
+		echo "Local human voice corpus not found; skipped."; \
+	fi
+
 test-quality-x86:
 	LINEA_RUNTIME_ARCH=x86_64 ./scripts/test-real-model.sh "$(APP_DIR)"
 
@@ -97,6 +104,7 @@ verify:
 	$(MAKE) package
 	$(MAKE) smoke
 	$(MAKE) test-quality
+	$(MAKE) test-quality-corpus
 	$(MAKE) test-quality-x86
 
 release:
@@ -122,7 +130,7 @@ runtimes: runtime-arm64 runtime-x86_64
 
 test:
 	mkdir -p "$(BUILD_DIR)"
-	xcrun swiftc $(SWIFT_FLAGS) -framework AppKit $(TEST_SOURCES) -o "$(BUILD_DIR)/tests"
+	xcrun swiftc $(SWIFT_FLAGS) -framework AppKit -framework AVFoundation $(TEST_SOURCES) -o "$(BUILD_DIR)/tests"
 	"$(BUILD_DIR)/tests"
 
 lint:
@@ -132,7 +140,7 @@ lint:
 coverage:
 	rm -rf "$(BUILD_DIR)/coverage"
 	mkdir -p "$(BUILD_DIR)/coverage"
-	xcrun swiftc $(SWIFT_FLAGS) -profile-generate -profile-coverage-mapping -framework AppKit $(TEST_SOURCES) -o "$(BUILD_DIR)/coverage/tests"
+	xcrun swiftc $(SWIFT_FLAGS) -profile-generate -profile-coverage-mapping -framework AppKit -framework AVFoundation $(TEST_SOURCES) -o "$(BUILD_DIR)/coverage/tests"
 	LLVM_PROFILE_FILE="$(BUILD_DIR)/coverage/default.profraw" "$(BUILD_DIR)/coverage/tests"
 	xcrun llvm-profdata merge -sparse "$(BUILD_DIR)/coverage/default.profraw" -o "$(BUILD_DIR)/coverage/default.profdata"
 	xcrun llvm-cov report "$(BUILD_DIR)/coverage/tests" -instr-profile="$(BUILD_DIR)/coverage/default.profdata" $(COVERAGE_SOURCES) | tee "$(BUILD_DIR)/coverage/report.txt"

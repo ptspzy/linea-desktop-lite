@@ -3,8 +3,34 @@ enum PushToTalkTransition {
   case released
 }
 
-func rightOptionPressed(keyCode: UInt16, optionPressed: Bool) -> Bool? {
-  keyCode == 61 ? optionPressed : nil
+enum PushToTalkShortcut: String, CaseIterable {
+  case rightOption
+  case rightControl
+  case rightCommand
+
+  var title: String {
+    switch self {
+    case .rightOption: "Right Option"
+    case .rightControl: "Right Control"
+    case .rightCommand: "Right Command"
+    }
+  }
+
+  var keyCode: UInt16 {
+    switch self {
+    case .rightOption: 61
+    case .rightControl: 62
+    case .rightCommand: 54
+    }
+  }
+}
+
+func modifierKeyPressed(
+  keyCode: UInt16,
+  isPressed: Bool,
+  shortcut: PushToTalkShortcut
+) -> Bool? {
+  keyCode == shortcut.keyCode ? isPressed : nil
 }
 
 struct PushToTalkState {

@@ -19,11 +19,18 @@ private enum DictationError: LocalizedError {
   }
 }
 
+private struct DictationResult {
+  let transcript: String
+  let audioDuration: TimeInterval
+  let recognitionDuration: TimeInterval
+}
+
 @MainActor
 private final class PushToTalkKey {
   private var globalMonitor: Any?
   private var localMonitor: Any?
   private var state = PushToTalkState()
+  private var shortcut: PushToTalkShortcut
   private let onPress: () -> Void
   private let onRelease: () -> Void
 
@@ -31,9 +38,19 @@ private final class PushToTalkKey {
     state.isPressed
   }
 
-  init(onPress: @escaping () -> Void, onRelease: @escaping () -> Void) {
+  init(
+    shortcut: PushToTalkShortcut,
+    onPress: @escaping () -> Void,
+    onRelease: @escaping () -> Void
+  ) {
+    self.shortcut = shortcut
     self.onPress = onPress
     self.onRelease = onRelease
+  }
+
+  func updateShortcut(_ shortcut: PushToTalkShortcut) {
+    self.shortcut = shortcut
+    state = PushToTalkState()
   }
 
   func register() {
@@ -48,15 +65,26 @@ private final class PushToTalkKey {
   }
 
   nonisolated private func enqueue(_ event: NSEvent) {
-    guard let pressed = rightOptionPressed(
-      keyCode: event.keyCode,
-      optionPressed: event.modifierFlags
-        .intersection(.deviceIndependentFlagsMask)
-        .contains(.option)
-    ) else { return }
+    let keyCode = event.keyCode
+    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     DispatchQueue.main.async { [weak self] in
-      self?.handle(pressed)
+      self?.handle(keyCode: keyCode, flags: flags)
     }
+  }
+
+  private func handle(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
+    let isPressed: Bool
+    switch shortcut {
+    case .rightOption: isPressed = flags.contains(.option)
+    case .rightControl: isPressed = flags.contains(.control)
+    case .rightCommand: isPressed = flags.contains(.command)
+    }
+    guard let pressed = modifierKeyPressed(
+      keyCode: keyCode,
+      isPressed: isPressed,
+      shortcut: shortcut
+    ) else { return }
+    handle(pressed)
   }
 
   private func handle(_ pressed: Bool) {
@@ -81,6 +109,10 @@ private final class DictationEngine {
 
   var isRecording: Bool {
     recorder?.isRecording == true
+  }
+
+  var isBusy: Bool {
+    isRecording || isTranscribing
   }
 
   var recordingDuration: TimeInterval {
@@ -130,7 +162,7 @@ private final class DictationEngine {
     Task.detached(priority: .utility) { prepareQwen() }
   }
 
-  func stopAndTranscribe(_ completion: @escaping (Result<(String, TimeInterval), Error>) -> Void) {
+  func stopAndTranscribe(_ completion: @escaping (Result<DictationResult, Error>) -> Void) {
     guard let url = audioURL, let startedAt else {
       completion(.failure(DictationError.noAudio))
       return
@@ -156,17 +188,23 @@ private final class DictationEngine {
   private func transcribe(
     url: URL,
     duration: TimeInterval,
-    _ completion: @escaping (Result<(String, TimeInterval), Error>) -> Void
+    _ completion: @escaping (Result<DictationResult, Error>) -> Void
   ) {
     isTranscribing = true
     Task { [weak self] in
       guard let self else { return }
       do {
+        let recognitionStartedAt = ProcessInfo.processInfo.systemUptime
         let text = try await Task.detached(priority: .userInitiated) {
           try transcribeWithQwen(audioURL: url)
         }.value
+        let recognitionDuration = ProcessInfo.processInfo.systemUptime - recognitionStartedAt
         self.finish(url: url)
-        completion(.success((text, duration)))
+        completion(.success(DictationResult(
+          transcript: text,
+          audioDuration: duration,
+          recognitionDuration: recognitionDuration
+        )))
       } catch {
         self.finish(url: url)
         completion(.failure(error))
@@ -198,12 +236,33 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private var workspaceURL: URL?
   private var workspaceVocabulary: [WorkspaceVocabularyEntry] = []
   private var shortcut = DictationShortcutState()
-  private var status = "Tap or hold Right Option to dictate"
+  private var shortcutChoice = PushToTalkShortcut(
+    rawValue: UserDefaults.standard.string(forKey: "pushToTalkShortcut") ?? ""
+  ) ?? .rightOption
+  private var lastDiagnosticSummary = UserDefaults.standard.string(forKey: "lastDiagnostics")
+    ?? "No dictation diagnostics yet."
+  private var status = "Ready"
 
   private let statusMenuItem = NSMenuItem()
+  private let shortcutMenuItem = NSMenuItem(title: "Shortcut", action: nil, keyEquivalent: "")
   private let modelMenuItem = NSMenuItem(
     title: "Choose ASR Model...",
     action: #selector(chooseModel(_:)),
+    keyEquivalent: ""
+  )
+  private let revealModelMenuItem = NSMenuItem(
+    title: "Show ASR Model in Finder",
+    action: #selector(revealModel(_:)),
+    keyEquivalent: ""
+  )
+  private let microphoneMenuItem = NSMenuItem(
+    title: "Microphone",
+    action: #selector(fixMicrophonePermission(_:)),
+    keyEquivalent: ""
+  )
+  private let accessibilityMenuItem = NSMenuItem(
+    title: "Accessibility",
+    action: #selector(fixAccessibilityPermission(_:)),
     keyEquivalent: ""
   )
   private let workspaceStatusMenuItem = NSMenuItem()
@@ -222,6 +281,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     action: #selector(clearHistory(_:)),
     keyEquivalent: ""
   )
+  private let diagnosticsMenuItem = NSMenuItem(
+    title: "Diagnostics...",
+    action: #selector(showDiagnostics(_:)),
+    keyEquivalent: ""
+  )
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
@@ -230,6 +294,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     buildMenu()
 
     hotKey = PushToTalkKey(
+      shortcut: shortcutChoice,
       onPress: { [weak self] in self?.handleShortcutPress() },
       onRelease: { [weak self] in self?.handleShortcutRelease() }
     )
@@ -262,12 +327,30 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     menu.addItem(NSMenuItem.separator())
     statusMenuItem.isEnabled = false
     menu.addItem(statusMenuItem)
-    let shortcutMenuItem = NSMenuItem(title: "Right Option: tap or hold", action: nil, keyEquivalent: "")
-    shortcutMenuItem.isEnabled = false
+    let shortcutMenu = NSMenu()
+    shortcutMenu.autoenablesItems = false
+    for choice in PushToTalkShortcut.allCases {
+      let item = NSMenuItem(
+        title: choice.title,
+        action: #selector(selectShortcut(_:)),
+        keyEquivalent: ""
+      )
+      item.target = self
+      item.representedObject = choice.rawValue
+      shortcutMenu.addItem(item)
+    }
+    shortcutMenuItem.submenu = shortcutMenu
     menu.addItem(shortcutMenuItem)
     menu.addItem(NSMenuItem.separator())
     modelMenuItem.target = self
     menu.addItem(modelMenuItem)
+    revealModelMenuItem.target = self
+    menu.addItem(revealModelMenuItem)
+    menu.addItem(NSMenuItem.separator())
+    microphoneMenuItem.target = self
+    menu.addItem(microphoneMenuItem)
+    accessibilityMenuItem.target = self
+    menu.addItem(accessibilityMenuItem)
     menu.addItem(NSMenuItem.separator())
     workspaceStatusMenuItem.isEnabled = false
     menu.addItem(workspaceStatusMenuItem)
@@ -278,6 +361,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     menu.addItem(NSMenuItem.separator())
     clearHistoryMenuItem.target = self
     menu.addItem(clearHistoryMenuItem)
+    diagnosticsMenuItem.target = self
+    menu.addItem(diagnosticsMenuItem)
     menu.addItem(NSMenuItem(title: "Quit Linea Lite", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q"))
     menu.delegate = self
     statusItem.menu = menu
@@ -285,6 +370,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   func menuWillOpen(_ menu: NSMenu) {
+    refreshMenu()
+  }
+
+  private var idleStatus: String {
+    "Tap or hold \(shortcutChoice.title) to dictate"
+  }
+
+  @objc private func selectShortcut(_ sender: NSMenuItem) {
+    guard !engine.isBusy,
+          let rawValue = sender.representedObject as? String,
+          let choice = PushToTalkShortcut(rawValue: rawValue) else { return }
+    shortcut.reset()
+    shortcutChoice = choice
+    hotKey?.updateShortcut(choice)
+    UserDefaults.standard.set(choice.rawValue, forKey: "pushToTalkShortcut")
+    status = idleStatus
     refreshMenu()
   }
 
@@ -303,7 +404,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     switch shortcut.release(at: ProcessInfo.processInfo.systemUptime) {
     case .continueRecording:
       if engine.isRecording {
-        status = "Recording; tap Right Option to stop"
+        status = "Recording; tap \(shortcutChoice.title) to stop"
         refreshMenu()
       }
     case .stop:
@@ -314,7 +415,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   private func startDictation() {
-    guard !engine.isRecording, !isStarting else { return }
+    guard !engine.isBusy, !isStarting else { return }
     guard currentQwenModelStatus() == .ready else {
       shortcut.reset()
       promptForModelIfNeeded(force: true)
@@ -339,7 +440,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       }
       guard self.shortcut.wantsRecording else {
         self.targetAppName = nil
-        self.status = "Tap or hold Right Option to dictate"
+        self.status = self.idleStatus
         self.hud.hide()
         self.refreshMenu()
         return
@@ -348,7 +449,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       do {
         try self.engine.start()
         self.status = self.shortcut.isLatched
-          ? "Recording; tap Right Option to stop"
+          ? "Recording; tap \(self.shortcutChoice.title) to stop"
           : "Recording..."
         self.startLevelUpdates()
       } catch {
@@ -365,7 +466,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     shortcut.reset()
     guard engine.isRecording else {
       hud.hide()
-      status = "Tap or hold Right Option to dictate"
+      status = idleStatus
       refreshMenu()
       return
     }
@@ -381,10 +482,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         self.targetAppName = nil
 
         switch result {
-        case .success((let transcript, let duration)):
+        case .success(let result):
+          let postProcessingStartedAt = ProcessInfo.processInfo.systemUptime
           let text = formattedTranscript(
             applyWorkspaceVocabulary(
-              to: transcript,
+              to: result.transcript,
               entries: defaultDeveloperVocabulary + self.workspaceVocabulary
             ),
             paragraphBreaks: paragraphFormattingAllowed(appName: appName)
@@ -392,13 +494,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
           guard !text.isEmpty else {
             self.status = "No speech detected"
             self.hud.showError()
+            self.saveDiagnostics(
+              audioDuration: result.audioDuration,
+              recognitionDuration: result.recognitionDuration,
+              postProcessingDuration: ProcessInfo.processInfo.systemUptime - postProcessingStartedAt,
+              outcome: "No speech"
+            )
             self.refreshMenu()
             return
           }
           let inserted = self.insertAtCursor(text)
           let saved = self.history.append(HistoryEntry(
             text: text,
-            duration: duration,
+            duration: result.audioDuration,
             appName: appName
           ))
           if !saved {
@@ -406,9 +514,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
           } else {
             self.status = inserted ? "Inserted \(text.count) chars" : "Copied; enable Accessibility to auto-insert"
           }
+          self.saveDiagnostics(
+            audioDuration: result.audioDuration,
+            recognitionDuration: result.recognitionDuration,
+            postProcessingDuration: ProcessInfo.processInfo.systemUptime - postProcessingStartedAt,
+            outcome: inserted ? "Inserted" : "Copied"
+          )
           self.hud.showComplete()
         case .failure(let error):
           self.status = error.localizedDescription
+          self.lastDiagnosticSummary = "Last dictation failed: \(error.localizedDescription)"
+          UserDefaults.standard.set(self.lastDiagnosticSummary, forKey: "lastDiagnostics")
           self.hud.showError()
         }
         self.refreshMenu()
@@ -474,7 +590,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   @objc private func chooseModel(_ sender: Any?) {
-    guard !isImportingModel else { return }
+    guard !isImportingModel, !engine.isBusy else { return }
     let panel = NSOpenPanel()
     panel.title = "Choose Qwen3-ASR Model"
     panel.message = "Select qwen3-asr-0.6b-q4_k.gguf. It will be verified and moved into Linea Lite."
@@ -490,6 +606,39 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     beginModelImport(from: sourceURL)
   }
 
+  @objc private func revealModel(_ sender: Any?) {
+    guard let modelURL = installedQwenModelURL() else { return }
+    NSWorkspace.shared.activateFileViewerSelecting([modelURL])
+  }
+
+  @objc private func fixMicrophonePermission(_ sender: Any?) {
+    if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+      engine.requestAccess { [weak self] allowed in
+        self?.status = allowed ? "Microphone permission enabled" : "Microphone permission denied"
+        self?.refreshMenu()
+      }
+      return
+    }
+    openPrivacySettings("Privacy_Microphone")
+  }
+
+  @objc private func fixAccessibilityPermission(_ sender: Any?) {
+    guard !AXIsProcessTrusted() else { return }
+    if accessibilityTimer == nil {
+      prepareAccessibility()
+    } else {
+      requestAccessibility()
+    }
+    openPrivacySettings("Privacy_Accessibility")
+  }
+
+  private func openPrivacySettings(_ pane: String) {
+    guard let url = URL(
+      string: "x-apple.systempreferences:com.apple.preference.security?\(pane)"
+    ) else { return }
+    NSWorkspace.shared.open(url)
+  }
+
   private func beginModelImport(from sourceURL: URL) {
     isImportingModel = true
     status = "Verifying local ASR model..."
@@ -498,6 +647,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     Task { [weak self] in
       let errorMessage = await Task.detached(priority: .utility) {
         do {
+          stopQwen()
           try installQwenModel(from: sourceURL)
           return nil as String?
         } catch {
@@ -519,11 +669,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       alert.addButton(withTitle: "OK")
     } else {
       status = AXIsProcessTrusted()
-        ? "Tap or hold Right Option to dictate"
+        ? idleStatus
         : "Model ready; enable Accessibility"
       hud.showComplete()
       alert.messageText = "Speech model is ready"
-      alert.informativeText = "Tap or hold Right Option in any app to dictate."
+      alert.informativeText = "Tap or hold \(shortcutChoice.title) in any app to dictate."
       alert.addButton(withTitle: "Done")
     }
     refreshMenu()
@@ -549,6 +699,61 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     UserDefaults.standard.removeObject(forKey: "workspacePath")
     status = "Workspace vocabulary cleared"
     refreshMenu()
+  }
+
+  @objc private func showDiagnostics(_ sender: Any?) {
+    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+      ?? "development"
+    #if arch(arm64)
+      let architecture = "arm64"
+    #elseif arch(x86_64)
+      let architecture = "x86_64"
+    #else
+      let architecture = "unknown"
+    #endif
+    let modelStatus = currentQwenModelStatus() == .ready ? "Ready" : "Missing"
+    let microphoneStatus = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+      ? "Allowed"
+      : "Needs attention"
+    let accessibilityStatus = AXIsProcessTrusted() ? "Allowed" : "Needs attention"
+    let report = """
+    Linea Lite \(version)
+    Architecture: \(architecture)
+    ASR model: \(modelStatus)
+    Microphone: \(microphoneStatus)
+    Accessibility: \(accessibilityStatus)
+    Shortcut: \(shortcutChoice.title)
+
+    \(lastDiagnosticSummary)
+
+    No transcript or audio is included.
+    """
+    let alert = NSAlert()
+    alert.messageText = "Local Diagnostics"
+    alert.informativeText = report
+    alert.addButton(withTitle: "Copy")
+    alert.addButton(withTitle: "Close")
+    NSApp.activate(ignoringOtherApps: true)
+    if alert.runModal() == .alertFirstButtonReturn {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(report, forType: .string)
+    }
+  }
+
+  private func saveDiagnostics(
+    audioDuration: TimeInterval,
+    recognitionDuration: TimeInterval,
+    postProcessingDuration: TimeInterval,
+    outcome: String
+  ) {
+    lastDiagnosticSummary = String(
+      format: "Last dictation: audio %.1fs, recognition %.2fs, formatting and insertion %.2fs, %@.",
+      audioDuration,
+      recognitionDuration,
+      postProcessingDuration,
+      outcome
+    )
+    UserDefaults.standard.set(lastDiagnosticSummary, forKey: "lastDiagnostics")
   }
 
   private func loadSavedWorkspace() {
@@ -580,7 +785,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       return
     }
 
-    status = "Enable Accessibility to use Right Option"
+    status = "Enable Accessibility to use \(shortcutChoice.title)"
     refreshMenu()
     requestAccessibility()
     accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
@@ -595,7 +800,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private func enableHotKey() {
     accessibilityTimer = nil
     hotKey?.register()
-    status = "Tap or hold Right Option to dictate"
+    status = idleStatus
     refreshMenu()
   }
 
@@ -625,14 +830,40 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       ? "● Linea"
       : "Linea \(history.entries.count)"
     statusMenuItem.title = status
+    shortcutMenuItem.title = "Shortcut: \(shortcutChoice.title)"
+    shortcutMenuItem.isEnabled = !engine.isBusy && !isStarting
+    for item in shortcutMenuItem.submenu?.items ?? [] {
+      item.state = item.representedObject as? String == shortcutChoice.rawValue ? .on : .off
+      item.isEnabled = shortcutMenuItem.isEnabled
+    }
     switch currentQwenModelStatus() {
     case .ready:
-      modelMenuItem.title = "ASR Model: Ready"
-      modelMenuItem.isEnabled = false
+      modelMenuItem.title = "Replace ASR Model..."
+      modelMenuItem.isEnabled = !isImportingModel && !engine.isBusy
+      revealModelMenuItem.isEnabled = true
     case .missing:
       modelMenuItem.title = isImportingModel ? "Verifying ASR Model..." : "Choose ASR Model..."
-      modelMenuItem.isEnabled = !isImportingModel
+      modelMenuItem.isEnabled = !isImportingModel && !engine.isBusy
+      revealModelMenuItem.isEnabled = false
     }
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized:
+      microphoneMenuItem.title = "Microphone: Allowed"
+      microphoneMenuItem.isEnabled = false
+    case .notDetermined:
+      microphoneMenuItem.title = "Microphone: Allow..."
+      microphoneMenuItem.isEnabled = true
+    case .denied, .restricted:
+      microphoneMenuItem.title = "Microphone: Open Settings..."
+      microphoneMenuItem.isEnabled = true
+    @unknown default:
+      microphoneMenuItem.title = "Microphone: Open Settings..."
+      microphoneMenuItem.isEnabled = true
+    }
+    accessibilityMenuItem.title = AXIsProcessTrusted()
+      ? "Accessibility: Allowed"
+      : "Accessibility: Open Settings..."
+    accessibilityMenuItem.isEnabled = !AXIsProcessTrusted()
     workspaceStatusMenuItem.title = workspaceURL.map { "Workspace: \($0.lastPathComponent)" }
       ?? "Workspace: None"
     clearWorkspaceMenuItem.isEnabled = workspaceURL != nil
