@@ -3,17 +3,20 @@ import AVFoundation
 func silenceAwareSegmentRanges(
   samples: [Float],
   sampleRate: Double,
-  targetDuration: TimeInterval = 45,
+  targetDuration: TimeInterval = 40,
   maximumDuration: TimeInterval = 60,
   searchDuration: TimeInterval = 6,
   overlapDuration: TimeInterval = 0.4,
+  minimumTailDuration: TimeInterval = 8,
   silenceThreshold: Float = 0.02
 ) -> [Range<Int>] {
   guard !samples.isEmpty, sampleRate > 0 else { return [] }
   let maximumFrames = max(1, Int(maximumDuration * sampleRate))
-  guard samples.count > maximumFrames else { return [0..<samples.count] }
-
   let targetFrames = min(maximumFrames, max(1, Int(targetDuration * sampleRate)))
+  let minimumTailFrames = max(1, Int(minimumTailDuration * sampleRate))
+  guard samples.count > maximumFrames || samples.count > targetFrames + minimumTailFrames else {
+    return [0..<samples.count]
+  }
   let searchFrames = max(1, Int(searchDuration * sampleRate))
   let overlapFrames = min(targetFrames / 2, max(0, Int(overlapDuration * sampleRate)))
   let windowFrames = max(1, Int(0.2 * sampleRate))
@@ -21,10 +24,12 @@ func silenceAwareSegmentRanges(
   var ranges: [Range<Int>] = []
   var start = 0
 
-  while samples.count - start > maximumFrames {
-    let target = min(samples.count, start + targetFrames)
+  while samples.count - start > maximumFrames
+    || samples.count - start > targetFrames + minimumTailFrames {
+    let latestBoundary = min(start + maximumFrames, samples.count - minimumTailFrames)
+    let target = min(latestBoundary, start + targetFrames)
     let searchStart = max(start + 1, target - searchFrames)
-    let searchEnd = min(samples.count, start + maximumFrames, target + searchFrames)
+    let searchEnd = min(latestBoundary, target + searchFrames)
     var bestBoundary = target
     var bestLevel = Float.greatestFiniteMagnitude
     var candidate = searchStart
@@ -39,7 +44,7 @@ func silenceAwareSegmentRanges(
       candidate += strideFrames
     }
     if bestLevel > silenceThreshold { bestBoundary = target }
-    bestBoundary = min(start + maximumFrames, max(start + overlapFrames + 1, bestBoundary))
+    bestBoundary = min(latestBoundary, max(start + overlapFrames + 1, bestBoundary))
     ranges.append(start..<bestBoundary)
     start = bestBoundary - overlapFrames
   }

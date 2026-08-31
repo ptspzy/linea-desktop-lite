@@ -269,6 +269,16 @@ expect(
     == [0..<300]
 )
 expect(
+  silenceAwareSegmentRanges(samples: Array(repeating: 0.5, count: 470), sampleRate: 10)
+    == [0..<470]
+)
+let fiftyTwoSecondSegments = silenceAwareSegmentRanges(
+  samples: Array(repeating: 0.5, count: 520),
+  sampleRate: 10
+)
+expect(fiftyTwoSecondSegments.count == 2)
+expect(fiftyTwoSecondSegments.last!.count >= 80)
+expect(
   mergedTranscriptParts(["第一句最后内容", "最后内容第二句", "第二句完成"])
     == "第一句最后内容第二句完成"
 )

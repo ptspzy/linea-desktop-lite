@@ -8,7 +8,7 @@ Included:
 
 - Native macOS microphone capture.
 - Ten-minute recording safety limit and stale temporary-audio cleanup.
-- Silence-aware long-recording segmentation with overlap and tail preservation.
+- Silence-aware segmentation around 40 seconds with overlap and an eight-second minimum tail.
 - Rejection of pathological repeated ASR output before cursor insertion or history storage.
 - Qwen3-ASR 0.6B Q4_K local speech recognition for zh-CN.
 - Native automatic punctuation and local format-only paragraph/list formatting.
