@@ -289,7 +289,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private let engine = DictationEngine()
   private let history = HistoryStore()
   private let historyView = HistoryMenuView()
-  private let hud = CaptureHUD()
+  private lazy var hud = CaptureHUD()
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private var hotKey: PushToTalkKey?
   private var accessibilityTimer: Timer?
@@ -354,7 +354,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
-    removeStaleCaptureFiles()
+    Task.detached(priority: .utility) { removeStaleCaptureFiles() }
     loadSavedWorkspace()
     buildMenu()
 
