@@ -14,7 +14,7 @@ Included:
 - Linea-style floating waveform while recording and processing.
 - Paste into the current cursor location.
 - Restore the previous clipboard after automatic paste without overwriting newer clipboard changes.
-- Local transcript history and a 16-week activity graph in the menu bar.
+- Searchable local transcript history, copy actions, and a 16-week activity graph in the menu bar.
 - One active workspace vocabulary for local product and technical terms.
 
 Not included:

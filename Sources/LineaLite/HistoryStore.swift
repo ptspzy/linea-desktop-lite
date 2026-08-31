@@ -59,6 +59,15 @@ func historyActivityLevel(characters: Int, maximum: Int) -> Int {
   return min(4, max(1, Int(ceil(Double(characters) / Double(maximum) * 4))))
 }
 
+func filteredHistoryEntries(_ entries: [HistoryEntry], query: String) -> [HistoryEntry] {
+  let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !query.isEmpty else { return entries }
+  return entries.filter {
+    $0.text.localizedCaseInsensitiveContains(query)
+      || ($0.appName?.localizedCaseInsensitiveContains(query) ?? false)
+  }
+}
+
 final class HistoryStore {
   private let url: URL
   private let limit: Int

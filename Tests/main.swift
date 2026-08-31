@@ -275,6 +275,10 @@ let history = [
     appName: "Notes"
   ),
 ]
+expect(filteredHistoryEntries(history, query: "") == history)
+expect(filteredHistoryEntries(history, query: "HELLO") == [history[1]])
+expect(filteredHistoryEntries(history, query: "textedit") == [history[0]])
+expect(filteredHistoryEntries(history, query: "missing").isEmpty)
 let activity = historyActivity(entries: history, endingAt: now, days: 3, calendar: calendar)
 expect(activity.map(\.count) == [0, 1, 1])
 expect(activity.map(\.characters) == [0, 5, 2])
