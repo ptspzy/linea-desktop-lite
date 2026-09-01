@@ -23,6 +23,7 @@ private let compactThreeItemListExpression = try! NSRegularExpression(
 )
 private let paragraphCues = ["后续的话", "另外的话", "另一方面", "接下来", "另外", "最后"]
 private let sentenceEndings: Set<Character> = ["。", "！", "？", ".", "!", "?"]
+private let terminalPunctuation: Set<Character> = ["，", "。", "！", "？", "；", "：", "、", ",", ".", "!", "?", ";", ":"]
 private let listTrimCharacters = CharacterSet.whitespacesAndNewlines.union(
   CharacterSet(charactersIn: "，,；;。.!！？?：:、")
 )
@@ -50,7 +51,8 @@ func formattedTranscript(_ value: String, paragraphBreaks: Bool = true) -> Strin
   let formatted = sections
     .map(formatSentenceSequence)
     .joined(separator: paragraphBreaks && sections.count > 1 ? "\n\n" : "")
-  return paragraphBreaks ? groupedLongParagraphs(formatted) : formatted
+  let result = paragraphBreaks ? groupedLongParagraphs(formatted) : formatted
+  return withoutSingleSentenceTerminalPunctuation(result)
 }
 
 func paragraphFormattingAllowed(appName: String?) -> Bool {
@@ -305,4 +307,18 @@ private func splitSentences(_ text: String) -> [String] {
   }
   if !current.isEmpty { sentences.append(current) }
   return sentences
+}
+
+private func withoutSingleSentenceTerminalPunctuation(_ text: String) -> String {
+  for index in text.indices where sentenceEndings.contains(text[index]) {
+    let next = text.index(after: index)
+    guard next < text.endIndex else { continue }
+    if text[index] != "." || text[next].isWhitespace { return text }
+  }
+
+  var result = text
+  while let last = result.last, terminalPunctuation.contains(last) {
+    result.removeLast()
+  }
+  return result
 }

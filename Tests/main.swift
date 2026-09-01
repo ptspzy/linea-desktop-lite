@@ -115,12 +115,12 @@ private let commonDictationCases = [
   DictationCase(
     name: "普通陈述",
     input: "今天下午三点我们在会议室讨论发布计划",
-    expected: "今天下午三点我们在会议室讨论发布计划。"
+    expected: "今天下午三点我们在会议室讨论发布计划"
   ),
   DictationCase(
     name: "短问句",
     input: "这个版本今天能发布吗",
-    expected: "这个版本今天能发布吗？"
+    expected: "这个版本今天能发布吗"
   ),
   DictationCase(
     name: "三段落",
@@ -150,17 +150,17 @@ private let commonDictationCases = [
   DictationCase(
     name: "技术内容保护",
     input: "请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs 然后连接 127.0.0.1 端口",
-    expected: "请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs，然后连接 127.0.0.1 端口。"
+    expected: "请在 DEV/2.5.1 分支检查 src-tauri/src/lib.rs，然后连接 127.0.0.1 端口"
   ),
   DictationCase(
     name: "分点误判保护",
     input: "我有三只猫 今天天气很好",
-    expected: "我有三只猫 今天天气很好。"
+    expected: "我有三只猫 今天天气很好"
   ),
   DictationCase(
     name: "小数误判保护",
     input: "房间有3.1米宽二米高三米长。",
-    expected: "房间有3.1米宽二米高三米长。"
+    expected: "房间有3.1米宽二米高三米长"
   ),
   DictationCase(
     name: "同字开头分点",
@@ -181,7 +181,7 @@ for testCase in commonDictationCases {
 expect(cleanedTranscript("  hello\n\nworld  ") == "hello world")
 expect(cleanedTranscript("Linea   Lite") == "Linea Lite")
 expect(cleanedTranscript("") == "")
-expect(formattedTranscript("这个功能现在能用吗，") == "这个功能现在能用吗？")
+expect(formattedTranscript("这个功能现在能用吗，") == "这个功能现在能用吗")
 expect(formattedTranscript("西红柿") == "西红柿")
 expect(
   formattedTranscript("当前先完成配置和本地测试 后续的话 再进行真实录音验证和发布检查")
