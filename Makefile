@@ -3,6 +3,7 @@ BUNDLE_ID := io.github.linea.desktop-lite
 SIGN_IDENTITY ?= Linea Local Development
 SIGN_FLAGS ?=
 SWIFT_FLAGS ?= -O -warnings-as-errors -strict-concurrency=complete
+MACOS_DEPLOYMENT_TARGET := 13.0
 BUILD_DIR := build
 APP_DIR := $(BUILD_DIR)/$(APP_NAME).app
 BIN := $(APP_DIR)/Contents/MacOS/$(APP_NAME)
@@ -28,7 +29,7 @@ build:
 	cp Info.plist "$(APP_DIR)/Contents/Info.plist"
 	cp "$(QWEN_ASR_BIN)" "$(APP_DIR)/Contents/Resources/bin/qwen-asr"
 	cp -R Resources/. "$(APP_DIR)/Contents/Resources/"
-	xcrun swiftc $(SWIFT_FLAGS) -target $(NATIVE_ARCH)-apple-macosx13.5 -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(BIN)"
+	xcrun swiftc $(SWIFT_FLAGS) -target $(NATIVE_ARCH)-apple-macosx$(MACOS_DEPLOYMENT_TARGET) -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(BIN)"
 	@if security find-identity -v -p codesigning | /usr/bin/grep -Fq '"$(SIGN_IDENTITY)"'; then \
 		codesign --force $(SIGN_FLAGS) --sign "$(SIGN_IDENTITY)" "$(APP_DIR)/Contents/Resources/bin/qwen-asr"; \
 		codesign --force $(SIGN_FLAGS) --sign "$(SIGN_IDENTITY)" --identifier "$(BUNDLE_ID)" --entitlements Entitlements.plist "$(APP_DIR)"; \
@@ -49,8 +50,8 @@ build-universal:
 	cp Info.plist "$(APP_DIR)/Contents/Info.plist"
 	lipo -create "$(ARM_QWEN_ASR_BIN)" "$(X86_QWEN_ASR_BIN)" -output "$(APP_DIR)/Contents/Resources/bin/qwen-asr"
 	cp -R Resources/. "$(APP_DIR)/Contents/Resources/"
-	xcrun swiftc $(SWIFT_FLAGS) -target arm64-apple-macosx13.5 -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(ARM_APP_BIN)"
-	xcrun swiftc $(SWIFT_FLAGS) -target x86_64-apple-macosx13.5 -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(X86_APP_BIN)"
+	xcrun swiftc $(SWIFT_FLAGS) -target arm64-apple-macosx$(MACOS_DEPLOYMENT_TARGET) -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(ARM_APP_BIN)"
+	xcrun swiftc $(SWIFT_FLAGS) -target x86_64-apple-macosx$(MACOS_DEPLOYMENT_TARGET) -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(X86_APP_BIN)"
 	lipo -create "$(ARM_APP_BIN)" "$(X86_APP_BIN)" -output "$(BIN)"
 	@if security find-identity -v -p codesigning | /usr/bin/grep -Fq '"$(SIGN_IDENTITY)"'; then \
 		codesign --force $(SIGN_FLAGS) --sign "$(SIGN_IDENTITY)" "$(APP_DIR)/Contents/Resources/bin/qwen-asr"; \
@@ -61,6 +62,8 @@ build-universal:
 	fi
 	lipo "$(BIN)" -verify_arch arm64 x86_64
 	lipo "$(APP_DIR)/Contents/Resources/bin/qwen-asr" -verify_arch arm64 x86_64
+	@test "$$(xcrun vtool -show-build "$(BIN)" | /usr/bin/grep -c "minos $(MACOS_DEPLOYMENT_TARGET)")" -eq 2
+	@test "$$(xcrun vtool -show-build "$(APP_DIR)/Contents/Resources/bin/qwen-asr" | /usr/bin/grep -c "minos $(MACOS_DEPLOYMENT_TARGET)")" -eq 2
 	codesign --verify --strict "$(APP_DIR)/Contents/Resources/bin/qwen-asr"
 	codesign --verify --deep --strict "$(APP_DIR)"
 
@@ -69,7 +72,7 @@ run: build
 
 compile-check:
 	mkdir -p "$(BUILD_DIR)"
-	xcrun swiftc $(SWIFT_FLAGS) -target $(NATIVE_ARCH)-apple-macosx13.5 -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(BUILD_DIR)/compile-check"
+	xcrun swiftc $(SWIFT_FLAGS) -target $(NATIVE_ARCH)-apple-macosx$(MACOS_DEPLOYMENT_TARGET) -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(BUILD_DIR)/compile-check"
 
 package: test build-universal
 	test -z "$$(find "$(APP_DIR)" -type f -name '*.gguf' -print -quit)"

@@ -28,7 +28,7 @@ Not included:
 
 ## Requirements
 
-- macOS 13.5 or newer on Apple Silicon or Intel.
+- macOS 13.0 or newer on Apple Silicon or Intel.
 - Xcode command line tools and CMake to build the pinned [CrispASR](https://github.com/CrispStrobe/CrispASR) runtime.
 
 ## Build
