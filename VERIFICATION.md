@@ -1,3 +1,38 @@
+# 0.2.2 Feedback and Number Formatting
+
+The user prefers the original left-to-right visual feedback over the 0.2.1 spinner.
+The HUD now uses a one-way waiting fill, no visible label, and a subtle left-to-right sheen.
+The fill stops short of the edge until real completion; it is not a measured percentage.
+Recording uses a smaller red center with a fine outline and a separate waveform area.
+The frame remains 118 x 30 points. `make test-hud` passed, including sampled nondecreasing
+fill widths beyond the original reversal point, completion, marker spacing, and cleanup.
+
+Spoken Chinese decimals are normalized as strings, preserving every digit and trailing zero.
+Standalone numbers and clear numeric contexts (including ports, versions, line numbers,
+percentages, and the user's example phrasing) prefer Arabic numerals. Ambiguous prose,
+time expressions, quoted content, and detected code/paths are guarded; this is not a general
+Chinese-language rewriting engine. Canonical unit-form integers are capped at 15 digits.
+
+Final local gates passed:
+
+```sh
+make lint test-hud coverage package smoke test-quality test-quality-x86
+```
+
+- Core line coverage: 84.55%, excluding the coordinator and UI as described below.
+- The exact spoken decimal fixture yields `数值是3.14159263`, CER 0.0000 on arm64 and
+  x86_64/Rosetta through the production recognition/formatting pipeline.
+- Controlled long-audio completeness passes on both runtimes; CER 0.1220 / 0.0813.
+- Full-Linea synthetic corpus: 40 samples, mean CER 0.1357, worst 0.7333, below unchanged
+  gates of 0.23 / 0.75. These are literal comparisons, not proof of overall ASR accuracy
+  improvement. The recognition model is unchanged; formatting has its own exact-output tests.
+- Universal signatures, model-free DMG verification and launch smoke pass. Normal 0.2.2
+  is installed and running, with the original history checksum unchanged.
+- No audio playback or volume change. The private human corpus and physical macOS 13/Intel
+  machines remain unavailable; those earlier verification limits still apply.
+
+The entries below describe historical runs, not validation of every later release.
+
 # 0.2.1 Loading Indicator
 
 Local run: 2026-09-09. The previous timed, autoreversing fill did not measure recognition

@@ -13,6 +13,8 @@ Included:
 - Rejection of pathological repeated ASR output before cursor insertion or history storage.
 - Qwen3-ASR 0.6B Q4_K local speech recognition for zh-CN.
 - Native automatic punctuation and local format-only paragraph/list formatting.
+- Exact spoken Chinese decimals and clear coding-number contexts use Arabic numerals; ambiguous prose,
+  idioms, time expressions, and detected code/paths are preserved. Fractional zeros are not rounded away.
 - Choose right `Option`, right `Control`, right `Command`, or an exclusive custom modifier/key combination; tap to start/stop or hold for push-to-talk. Escape cancels recording or pending output.
 - Linea-style floating waveform while recording and processing.
 - Paste only when the original application, focused element and available selection still match. Otherwise retain the result in the clipboard/history without pasting into another field. A dispatched paste is not claimed as confirmed insertion.
@@ -104,7 +106,7 @@ remain outside this repository and are never packaged.
 
 `make test-menu` verifies native AppKit layout and interactions in light/dark appearances at multiple widths,
 and writes synthetic screenshots to `build/menu-snapshots`. No personal history is loaded by these checks.
-`make test-hud` checks the native indeterminate spinner, fixed layout, state transitions, and cancellation
+`make test-hud` checks the one-way waiting fill, recording marker spacing, state transitions, and cancellation
 of stale hide timers; its synthetic screenshot is written to `build/hud-snapshots`.
 For interactive tests, `make ui-test-build` builds a separate, compile-time-instrumented app. Launch it with
 `--ui-test-directory /absolute/test-folder --ui-test-audio /absolute/synthetic.wav` to isolate history/preferences

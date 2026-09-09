@@ -14,40 +14,73 @@ enum HUDRegression {
     for title in ["识别中", "准备中", "导入模型"] {
       if title == "准备中" { hud.showStarting() } else { hud.showProcessing(title) }
       let view = panel.contentView!
-      let indicator = view.subviews.compactMap { $0 as? NSProgressIndicator }.first!
-      let label = view.subviews.compactMap { $0 as? NSTextField }.first!
-      precondition(indicator.style == .spinning && indicator.isIndeterminate)
-      precondition(!indicator.isDisplayedWhenStopped && label.stringValue == title)
-      precondition(panel.frame == frame && view.subviews.count == 2)
-      precondition(view.bounds.contains(indicator.frame) && view.bounds.contains(label.frame))
-      precondition(!indicator.frame.intersects(label.frame))
+      let clip = view.layer!.sublayers!.first!
+      let fill = clip.sublayers!.first!
+      let advance = fill.animation(forKey: "processing-advance") as! CABasicAnimation
+      let sweep = fill.sublayers!.first!.animation(forKey: "processing-sweep") as! CABasicAnimation
+      precondition(view.subviews.isEmpty && panel.frame == frame, "No spinner/text or layout shift")
+      precondition(fill.anchorPoint.x == 0 && fill.position.x == 0)
+      precondition(advance.keyPath == "bounds.size.width" && !advance.autoreverses && advance.repeatCount == 0)
+      precondition((advance.fromValue as! CGFloat) < (advance.toValue as! CGFloat))
+      precondition(fill.bounds.width < clip.bounds.width && clip.bounds.contains(fill.frame))
+      precondition(sweep.keyPath == "position.x" && !sweep.autoreverses)
+      precondition((sweep.fromValue as! CGFloat) < (sweep.toValue as! CGFloat))
       precondition(panel.accessibilityLabel() == (title == "准备中" ? "麦克风启动中" : title))
-      // Stay past the old 2.4-second turning point: only a spinner, never a fill bar.
-      RunLoop.current.run(until: Date().addingTimeInterval(title == "识别中" ? 3 : 0.1))
-      precondition(indicator.style == .spinning && indicator.frame.size == NSSize(width: 16, height: 16))
-      precondition(view.layer?.sublayers?.allSatisfy { $0.animation(forKey: "processing") == nil } != false)
-      if title == "识别中", CommandLine.arguments.count > 1 {
-        let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
-        view.cacheDisplay(in: view.bounds, to: bitmap)
-        try bitmap.representation(using: .png, properties: [:])!.write(
-          to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("processing.png")
-        )
+      if title == "识别中" {
+        var previous: CGFloat = 0
+        // Sample across the old reversal and beyond the new waiting cap.
+        for delay in [0.1, 0.5, 2.1, 2.5, 3.2] {
+          RunLoop.current.run(until: Date().addingTimeInterval(delay))
+          let width = fill.presentation()?.bounds.width ?? fill.bounds.width
+          precondition(width + 0.01 >= previous && width < clip.bounds.width, "Waiting fill must never retreat or finish early")
+          previous = width
+        }
+        try snapshot(view, named: "processing")
       }
-      hud.showRecording()
-      precondition(indicator.superview == nil, "Recording must remove the busy indicator")
+      for latched in [false, true] {
+        hud.showRecording(latched: latched)
+        let layers = panel.contentView!.layer!.sublayers!
+        let indicator = layers.first { $0.name == "recording-indicator" }!
+        let mark = indicator.sublayers!.first!
+        precondition(indicator.bounds.contains(mark.frame) && mark.bounds.size == NSSize(width: 4, height: 4))
+        precondition(mark.cornerRadius == (latched ? 0.8 : 2))
+        for level in [0.0, 0.5, 1.0] {
+          hud.setLevel(level)
+          for wave in layers where wave.name == "recording-wave" {
+            precondition(wave.frame.minX >= indicator.frame.maxX + 7)
+            precondition(panel.contentView!.bounds.contains(wave.frame))
+          }
+        }
+        if title == "识别中" { try snapshot(panel.contentView!, named: latched ? "recording-tap" : "recording-hold") }
+      }
     }
-    for show in [hud.showComplete, hud.showError] {
+    for (show, label) in [(hud.showComplete, "已完成"), (hud.showError, "处理失败")] {
       hud.showProcessing()
-      let indicator = panel.contentView!.subviews.compactMap { $0 as? NSProgressIndicator }.first!
       show()
-      precondition(indicator.superview == nil, "Terminal states must remove the busy indicator")
+      precondition(panel.accessibilityLabel() == label)
+      if label == "已完成" {
+        let fill = panel.contentView!.layer!.sublayers!.first!
+        let finish = fill.animation(forKey: "processing-complete") as! CABasicAnimation
+        precondition(fill.bounds.width == frame.width - 4 && !finish.autoreverses)
+        precondition((finish.fromValue as! CGFloat) < (finish.toValue as! CGFloat))
+      }
       hud.showProcessing()
       RunLoop.current.run(until: Date().addingTimeInterval(1.3))
       precondition(panel.isVisible, "An older terminal-state timer must not hide new processing")
     }
     hud.hide()
-    precondition(!panel.isVisible)
-    print("PASS: native indeterminate HUD, stable layout, state transitions and hide cancellation")
+    precondition(!panel.isVisible && panel.contentView == nil, "Hidden HUD must release all animation layers")
+    print("PASS: one-way waiting fill, no premature completion, compact recording marks and state cleanup")
+  }
+
+  @MainActor
+  private static func snapshot(_ view: NSView, named name: String) throws {
+    guard CommandLine.arguments.count > 1 else { return }
+    let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    try bitmap.representation(using: .png, properties: [:])!.write(
+      to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("\(name).png")
+    )
   }
 }
 #endif

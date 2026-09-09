@@ -85,6 +85,7 @@ if [[ -n "$MANIFEST" ]]; then
     }'
 else
   check_audio "$AUDIO" "$REFERENCE" Qwen3-ASR 0.6B 4-bit MLX balanced
+  check_audio "$ROOT/Tests/Fixtures/spoken-decimal.wav" "数值是3.14159263" 3.14159263
 fi
 
 # Synthetic fixture only: three separated utterances cover beginning/middle/end without playback.

@@ -53,7 +53,7 @@ func formattedTranscript(_ value: String, paragraphBreaks: Bool = true) -> Strin
     .map { normalizedPunctuationSpacing(cleanedTranscript($0)) }
     .filter { !$0.isEmpty }
   if paragraphBreaks, paragraphs.count == 1, let list = formattedExplicitList(cleaned) {
-    return list
+    return normalizedSpokenNumbers(list)
   }
 
   let sections = (paragraphBreaks ? paragraphs : [cleaned]).flatMap(strongParagraphSections)
@@ -64,7 +64,142 @@ func formattedTranscript(_ value: String, paragraphBreaks: Bool = true) -> Strin
     }
     .joined(separator: paragraphBreaks && sections.count > 1 ? "\n\n" : "")
   let result = paragraphBreaks ? groupedLongParagraphs(formatted) : formatted
-  return withoutSingleSentenceTerminalPunctuation(result)
+  return normalizedSpokenNumbers(withoutSingleSentenceTerminalPunctuation(result))
+}
+
+private let spokenNumberExpression = try! NSRegularExpression(
+  pattern: #"(?:负?百分之)?[负零〇一二两三四五六七八九十百千万亿点]+"#
+)
+private let spokenNumberContextExpression = try! NSRegularExpression(
+  pattern: #"(版本号?|端口号?|行号|数值|数字|小数|圆周率|阈值|百分比|等于|设置为|设为|改为|改成|比如说|比如|例如|(?:参数|值|系数|常量)(?:为|是))(?:设置为|设为|改为|改成|为|是)?[\s：:]*$"#
+)
+private let quotedNumberExpression = try! NSRegularExpression(
+  pattern: #"`[^`]*(?:`|$)|"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)"#
+)
+private let technicalNumberExpression = try! NSRegularExpression(
+  pattern: #"""
+    (?<![^\n，。！？；,!?;])[^\n，。！？；,!?;]*
+      (?:[-=+*/%<>{}()\[\]]|\b(?:let|var|const|func|class|struct|enum|def|return|case|import|from|if|for|while|switch|echo|export)\s)
+      [^\n，。！？；,!?;]*
+    |(?<![^\s，。！？；：、,!?;:])[^\s，。！？；：、,!?;:]*
+      (?:[A-Za-z0-9_/@\\-]|\.(?=[^\s，。！？；：、,!?;:]))[^\s，。！？；：、,!?;:]*
+    """#,
+  options: .allowCommentsAndWhitespace
+)
+private let spokenDigits: [Character: String] = [
+  "零": "0", "〇": "0", "一": "1", "二": "2", "两": "2", "三": "3", "四": "4",
+  "五": "5", "六": "6", "七": "7", "八": "8", "九": "9",
+]
+private let spokenIntegerFormatter: NumberFormatter = {
+  let formatter = NumberFormatter()
+  formatter.locale = Locale(identifier: "zh_CN")
+  formatter.numberStyle = .spellOut
+  return formatter
+}()
+
+private func normalizedSpokenNumbers(_ text: String) -> String {
+  let fullRange = NSRange(text.startIndex..., in: text)
+  let matches = spokenNumberExpression.matches(in: text, range: fullRange)
+  guard !matches.isEmpty else { return text }
+  let protected = [quotedNumberExpression, technicalNumberExpression]
+    .flatMap { $0.matches(in: text, range: fullRange).map(\.range) }
+    .sorted { $0.location < $1.location }
+  var protectedIndex = 0
+  var cursor = text.startIndex
+  var output = ""
+  for match in matches {
+    while protectedIndex < protected.count, NSMaxRange(protected[protectedIndex]) <= match.range.location {
+      protectedIndex += 1
+    }
+    if protectedIndex < protected.count,
+       NSIntersectionRange(protected[protectedIndex], match.range).length > 0 { continue }
+    guard let range = Range(match.range, in: text) else { continue }
+    let token = String(text[range])
+    let before = String(text[..<range.lowerBound].suffix(48))
+    let after = text[range.upperBound...]
+    let context = spokenNumberContextExpression.firstMatch(
+      in: before, range: NSRange(before.startIndex..., in: before)
+    )
+    let contextName = context.flatMap { Range($0.range(at: 1), in: before) }
+      .map { String(before[$0]) }
+    let version = contextName?.hasPrefix("版本") ?? false
+    let standalone = spokenNumberBoundary(before.last) && spokenNumberBoundary(after.first)
+    let lineNumber = before.hasSuffix("第") && after.hasPrefix("行")
+      && !token.contains("点") && !token.contains("负")
+      && (spokenNumberBoundary(after.dropFirst().first) || after.hasPrefix("行的") || after.hasPrefix("行报错"))
+    let percentage = token.hasPrefix("百分之") || token.hasPrefix("负百分之")
+    guard standalone || lineNumber
+      || ((context != nil || percentage) && (spokenNumberBoundary(after.first)
+        || after.hasPrefix("的") || after.hasPrefix("这样的"))) else { continue }
+    if (context == nil || ["比如说", "比如", "例如"].contains(contextName ?? "")),
+       ["七七八八", "三三两两", "三三五五"].contains(token) { continue }
+    if token.contains("点"), !version {
+      let previous = before.trimmingCharacters(in: listTrimCharacters)
+      let following = after.prefix(8).trimmingCharacters(in: .whitespacesAndNewlines)
+      if ["上午", "下午", "晚上", "凌晨", "中午", "早上", "早晨", "傍晚"].contains(where: previous.hasSuffix)
+        || ["刻", "分", "秒", "钟", "半"].contains(where: following.hasPrefix) { continue }
+    }
+    guard let number = spokenNumber(token, version: version) else { continue }
+    output += text[cursor..<range.lowerBound] + number
+    cursor = range.upperBound
+  }
+  output += text[cursor...]
+  return output
+}
+
+private func spokenNumberBoundary(_ character: Character?) -> Bool {
+  guard let character else { return true }
+  return character.isWhitespace || "，。！？；：、,.!?;:（）".contains(character)
+}
+
+private func spokenNumber(_ token: String, version: Bool) -> String? {
+  var body = token[...]
+  var negative = body.hasPrefix("负")
+  if negative { body.removeFirst() }
+  let percentage = body.hasPrefix("百分之")
+  if percentage {
+    body = body.dropFirst(3)
+    if !negative, body.hasPrefix("负") {
+      negative = true
+      body.removeFirst()
+    }
+  }
+  let parts = body.split(separator: "点", omittingEmptySubsequences: false)
+  guard let first = parts.first, let integer = spokenInteger(first) else { return nil }
+  var number = integer
+  if version {
+    guard !negative, !percentage else { return nil }
+    for part in parts.dropFirst() {
+      guard let component = spokenInteger(part) else { return nil }
+      number += "." + component
+    }
+  } else if parts.count > 1 {
+    guard parts.count == 2, !parts[1].isEmpty else { return nil }
+    // Fractional digits stay strings, including leading/trailing zeros and arbitrarily long decimals.
+    let fraction = parts[1].compactMap { spokenDigits[$0] }
+    guard fraction.count == parts[1].count, !parts[1].contains("两") else { return nil }
+    number += "." + fraction.joined()
+  }
+  return (negative ? "-" : "") + number + (percentage ? "%" : "")
+}
+
+private func spokenInteger(_ text: Substring) -> String? {
+  guard !text.isEmpty else { return nil }
+  let digits = text.compactMap { spokenDigits[$0] }
+  if digits.count == text.count {
+    guard text.count == 1 || !text.contains("两") else { return nil }
+    return digits.joined()
+  }
+  // ponytail: unit-form integers are limited to 15 digits; larger values need exact parser tests.
+  guard text.count <= 48, !text.contains("负"),
+        let number = spokenIntegerFormatter.number(from: String(text)),
+        number.compare(0) != .orderedAscending,
+        number.compare(999_999_999_999_999) != .orderedDescending,
+        let spelling = spokenIntegerFormatter.string(from: number) else { return nil }
+  let normalized = text.replacingOccurrences(of: "两", with: "二").replacingOccurrences(of: "〇", with: "零")
+  // Reject partial parses and ambiguous shorthand such as 一百二 (Foundation reads it as 102).
+  guard spelling.replacingOccurrences(of: "〇", with: "零") == normalized else { return nil }
+  return number.stringValue
 }
 
 func paragraphFormattingAllowed(appName: String?) -> Bool {
