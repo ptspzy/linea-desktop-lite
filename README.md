@@ -88,6 +88,7 @@ make test
 make test-quality
 make test-quality-corpus
 make test-menu
+make test-hud
 ```
 
 `make test` runs optimized Swift checks with compiler warnings and complete concurrency violations treated as errors,
@@ -103,6 +104,8 @@ remain outside this repository and are never packaged.
 
 `make test-menu` verifies native AppKit layout and interactions in light/dark appearances at multiple widths,
 and writes synthetic screenshots to `build/menu-snapshots`. No personal history is loaded by these checks.
+`make test-hud` checks the native indeterminate spinner, fixed layout, state transitions, and cancellation
+of stale hide timers; its synthetic screenshot is written to `build/hud-snapshots`.
 For interactive tests, `make ui-test-build` builds a separate, compile-time-instrumented app. Launch it with
 `--ui-test-directory /absolute/test-folder --ui-test-audio /absolute/synthetic.wav` to isolate history/preferences
 and exercise the normal recognition/output flow without playing audio. Omit the audio argument to test the

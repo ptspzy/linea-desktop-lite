@@ -1367,7 +1367,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private func beginModelImport(from sourceURL: URL) {
     isImportingModel = true
     status = "正在校验本地模型"
-    hud.showProcessing()
+    hud.showProcessing("导入模型")
     refreshMenu()
     Task { [weak self] in
       let errorMessage = await Task.detached(priority: .utility) { [weak self] in

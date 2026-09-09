@@ -1,3 +1,19 @@
+# 0.2.1 Loading Indicator
+
+Local run: 2026-09-09. The previous timed, autoreversing fill did not measure recognition
+progress. It is replaced with the native AppKit indeterminate spinner and a short status
+label, preserving the 118 x 30 point HUD. No percentage or time estimate is invented.
+Microphone startup and model import use the same indicator with their own labels.
+
+`make test-hud` passed: processing remains a spinner beyond the old 2.4-second turning
+point, all three labels fit, recording/completion/error remove the spinner, hidden HUDs
+stop animation, and stale completion/error timers cannot hide a new recognition session.
+This narrow UI change does not alter the ASR model or recognition pipeline. The 0.2.0
+quality numbers below are the previous run, not a new 0.2.1 speech-quality measurement.
+`make lint package smoke` also passed, including the core regression suite, Universal
+build/signature checks, and DMG validation. Normal 0.2.1 is installed and running locally;
+the existing history checksum is unchanged. No playback or volume changes were made.
+
 # 0.2.0 Verification
 
 Local run: 2026-09-09. Goal: reliable, lightweight, local menu-bar dictation for developers.

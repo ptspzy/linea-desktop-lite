@@ -20,7 +20,7 @@ SOURCES := $(wildcard Sources/LineaLite/*.swift)
 COVERAGE_SOURCES := $(filter-out Sources/LineaLite/main.swift Sources/LineaLite/CaptureHUD.swift Sources/LineaLite/HistoryMenuView.swift,$(SOURCES))
 TEST_SOURCES := $(COVERAGE_SOURCES) $(wildcard Tests/*.swift)
 
-.PHONY: build build-universal compile-check coverage lint run test ui-test-build test-menu test-quality test-quality-corpus test-quality-x86 smoke verify package release runtime-arm64 runtime-x86_64 runtimes clean
+.PHONY: build build-universal compile-check coverage lint run test ui-test-build test-menu test-hud test-quality test-quality-corpus test-quality-x86 smoke verify package release runtime-arm64 runtime-x86_64 runtimes clean
 
 build:
 	test -x "$(QWEN_ASR_BIN)"
@@ -78,6 +78,11 @@ test-menu:
 	xcrun swiftc $(SWIFT_FLAGS) -DHISTORY_REGRESSION_STANDALONE -DHISTORY_MENU_REGRESSION -framework AppKit Sources/LineaLite/HistoryStore.swift Sources/LineaLite/HistoryMenuView.swift Tests/HistoryRegression.swift -o "$(BUILD_DIR)/menu-tests"
 	"$(BUILD_DIR)/menu-tests" "$(BUILD_DIR)/menu-snapshots"
 
+test-hud:
+	mkdir -p "$(BUILD_DIR)/hud-snapshots"
+	xcrun swiftc $(SWIFT_FLAGS) -DHUD_REGRESSION_STANDALONE -framework AppKit Sources/LineaLite/CaptureHUD.swift Tests/HUDRegression.swift -o "$(BUILD_DIR)/hud-tests"
+	"$(BUILD_DIR)/hud-tests" "$(BUILD_DIR)/hud-snapshots"
+
 compile-check:
 	mkdir -p "$(BUILD_DIR)"
 	xcrun swiftc $(SWIFT_FLAGS) -target $(NATIVE_ARCH)-apple-macosx$(MACOS_DEPLOYMENT_TARGET) -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(BUILD_DIR)/compile-check"
@@ -113,6 +118,7 @@ verify:
 	$(MAKE) lint
 	$(MAKE) coverage
 	$(MAKE) test-menu
+	$(MAKE) test-hud
 	$(MAKE) package
 	$(MAKE) smoke
 	$(MAKE) test-quality
@@ -127,6 +133,7 @@ release:
 	$(MAKE) lint
 	$(MAKE) coverage
 	$(MAKE) test-menu
+	$(MAKE) test-hud
 	$(MAKE) package SIGN_IDENTITY="$(SIGN_IDENTITY)" SIGN_FLAGS="--options runtime --timestamp"
 	$(MAKE) smoke
 	$(MAKE) test-quality

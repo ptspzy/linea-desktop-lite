@@ -5,6 +5,7 @@ import QuartzCore
 final class CaptureHUD {
   private let size = NSSize(width: 118, height: 30)
   private let panel: NSPanel
+  private let activityIndicator = NSProgressIndicator()
   private var bars: [(layer: CALayer, height: CGFloat)] = []
   private var phase: CGFloat = 0
   private var hideWorkItem: DispatchWorkItem?
@@ -39,7 +40,7 @@ final class CaptureHUD {
   }
 
   func showStarting() {
-    showProcessing()
+    showProcessing("准备中")
     panel.setAccessibilityLabel("麦克风启动中")
   }
 
@@ -89,34 +90,28 @@ final class CaptureHUD {
     CATransaction.commit()
   }
 
-  func showProcessing() {
+  func showProcessing(_ title: String = "识别中") {
     cancelPendingHide()
     bars = []
-    let root = makeRoot()
-    let clip = CALayer()
-    clip.frame = NSRect(x: 2, y: 2, width: size.width - 4, height: size.height - 4)
-    clip.cornerRadius = (size.height - 4) / 2
-    clip.masksToBounds = true
-    root.addSublayer(clip)
+    show(makeRoot())
+    panel.setAccessibilityLabel(title)
 
-    let progress = CALayer()
-    progress.bounds = NSRect(x: 0, y: 0, width: clip.bounds.width, height: clip.bounds.height)
-    progress.anchorPoint = CGPoint(x: 0, y: 0.5)
-    progress.position = CGPoint(x: 0, y: clip.bounds.midY)
-    progress.backgroundColor = NSColor(srgbRed: 0.54, green: 0.52, blue: 0.48, alpha: 0.64).cgColor
-    progress.opacity = 0.34
-    progress.transform = CATransform3DMakeScale(0.98, 1, 1)
-    clip.addSublayer(progress)
+    let label = NSTextField(labelWithString: title)
+    label.font = .systemFont(ofSize: 12, weight: .medium)
+    label.textColor = .white
+    label.sizeToFit()
+    let startX = (size.width - label.frame.width - 24) / 2
+    label.frame.origin = NSPoint(x: startX + 24, y: (size.height - label.frame.height) / 2)
 
-    let animation = CABasicAnimation(keyPath: "transform.scale.x")
-    animation.fromValue = 0.03
-    animation.toValue = 0.98
-    animation.duration = 2.4
-    animation.autoreverses = true
-    animation.repeatCount = .infinity
-    animation.timingFunction = CAMediaTimingFunction(name: .linear)
-    progress.add(animation, forKey: "processing")
-    show(root)
+    activityIndicator.style = .spinning
+    activityIndicator.controlSize = .small
+    activityIndicator.isIndeterminate = true
+    activityIndicator.isDisplayedWhenStopped = false
+    activityIndicator.appearance = NSAppearance(named: .darkAqua)
+    activityIndicator.frame = NSRect(x: startX, y: (size.height - 16) / 2, width: 16, height: 16)
+    panel.contentView?.addSubview(activityIndicator)
+    panel.contentView?.addSubview(label)
+    activityIndicator.startAnimation(nil)
   }
 
   func showComplete() {
@@ -155,6 +150,7 @@ final class CaptureHUD {
 
   func hide() {
     cancelPendingHide()
+    activityIndicator.stopAnimation(nil)
     bars = []
     panel.orderOut(nil)
   }
@@ -176,6 +172,8 @@ final class CaptureHUD {
 
   private func show(_ root: CALayer) {
     cancelPendingHide()
+    activityIndicator.stopAnimation(nil)
+    activityIndicator.removeFromSuperview()
     let view = NSView(frame: NSRect(origin: .zero, size: size))
     view.wantsLayer = true
     view.layer = root
