@@ -43,11 +43,11 @@ func removeStaleCaptureFiles(
   ) else { return }
 
   for file in files where file.lastPathComponent.hasPrefix("linea-lite-")
-    && file.pathExtension == "wav" {
+    && (["wav", "log"].contains(file.pathExtension) || file.lastPathComponent.hasSuffix(".log.stderr")) {
     guard let modifiedAt = try? file.resourceValues(
       forKeys: [.contentModificationDateKey]
     ).contentModificationDate,
-      now.timeIntervalSince(modifiedAt) > 60 * 60 else { continue }
+      now.timeIntervalSince(modifiedAt) > CaptureRecovery.lifetime else { continue }
     try? FileManager.default.removeItem(at: file)
   }
 }

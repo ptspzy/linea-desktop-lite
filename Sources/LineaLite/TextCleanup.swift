@@ -4,7 +4,7 @@ private let semanticUnitExpression = try! NSRegularExpression(
   pattern: #"\p{Han}|[A-Za-z0-9]+(?:[._/-][A-Za-z0-9]+)*"#
 )
 private let punctuationSpacingExpression = try! NSRegularExpression(
-  pattern: #"\s+([，。！？；：,.!?;:])"#
+  pattern: #"\s+([，。！？；：,!?;:])"#
 )
 private let connectorExpression = try! NSRegularExpression(
   pattern: #"(?<![，。！？；：,.!?;:])\s+(然后|但是|不过|所以|而且|同时|接着|因此)\s*"#
@@ -20,6 +20,9 @@ private let spokenListMarkerExpression = try! NSRegularExpression(
 )
 private let compactThreeItemListExpression = try! NSRegularExpression(
   pattern: #"^(.*?有\s*(?:三|3)(?:种|个|项|点|条|类|份|组|步|方面|段)?)[：:.．]?\s*(?:一|1)[、.．)]?\s*(.+?)(?:二|2)[、.．)]?\s*(.+?)(?:三|3)[、.．)]?\s*(.+?)[。.!！？?]?$"#
+)
+private let numberedListMarkerExpression = try! NSRegularExpression(
+  pattern: #"(?:^|[\s：:,，；;。!！？?])(?:([1-9][0-9]*(?:\.[1-9][0-9]*)+)(?:[.)．、])?(?:\s+|(?=\p{Han}))|([1-9][0-9]*)[.)．、]\s+)"#
 )
 private let paragraphCues = ["后续的话", "另外的话", "另一方面", "接下来", "另外", "最后"]
 private let sentenceEndings: Set<Character> = ["。", "！", "？", ".", "!", "?"]
@@ -45,11 +48,20 @@ func cleanedTranscript(_ value: String) -> String {
 func formattedTranscript(_ value: String, paragraphBreaks: Bool = true) -> String {
   let cleaned = normalizedPunctuationSpacing(cleanedTranscript(value))
   guard !cleaned.isEmpty else { return "" }
-  if paragraphBreaks, let list = formattedExplicitList(cleaned) { return list }
+  let paragraphs = value.replacingOccurrences(of: "\r\n", with: "\n")
+    .components(separatedBy: "\n\n")
+    .map { normalizedPunctuationSpacing(cleanedTranscript($0)) }
+    .filter { !$0.isEmpty }
+  if paragraphBreaks, paragraphs.count == 1, let list = formattedExplicitList(cleaned) {
+    return list
+  }
 
-  let sections = strongParagraphSections(cleaned)
+  let sections = (paragraphBreaks ? paragraphs : [cleaned]).flatMap(strongParagraphSections)
   let formatted = sections
-    .map(formatSentenceSequence)
+    .map { section in
+      if paragraphBreaks, let list = formattedExplicitList(section) { return list }
+      return formatSentenceSequence(section)
+    }
     .joined(separator: paragraphBreaks && sections.count > 1 ? "\n\n" : "")
   let result = paragraphBreaks ? groupedLongParagraphs(formatted) : formatted
   return withoutSingleSentenceTerminalPunctuation(result)
@@ -61,7 +73,47 @@ func paragraphFormattingAllowed(appName: String?) -> Bool {
 }
 
 private func formattedExplicitList(_ text: String) -> String? {
-  formattedInlineList(text) ?? formattedSpokenList(text) ?? formattedCompactThreeItemList(text)
+  formattedNumberedList(text) ?? formattedInlineList(text)
+    ?? formattedSpokenList(text) ?? formattedCompactThreeItemList(text)
+}
+
+private func formattedNumberedList(_ text: String) -> String? {
+  let matches = numberedListMarkerExpression.matches(in: text, range: NSRange(text.startIndex..., in: text))
+  guard matches.count >= 2 else { return nil }
+  let labels = matches.compactMap { match -> String? in
+    let group = match.range(at: 1).location == NSNotFound ? 2 : 1
+    return Range(match.range(at: group), in: text).map { String(text[$0]) }
+  }
+  let numbers = labels.map { $0.split(separator: ".").compactMap { Int($0) } }
+  guard zip(labels, numbers).allSatisfy({ $0.split(separator: ".").count == $1.count }),
+        numbers[0].last == 1 || numbers[1] == numbers[0] + [1] else { return nil }
+  for (previous, next) in zip(numbers, numbers.dropFirst()) {
+    if next == previous + [1] { continue }
+    guard next.count <= previous.count,
+          next.dropLast() == previous.prefix(next.count - 1),
+          previous[next.count - 1] < Int.max,
+          next.last == previous[next.count - 1] + 1 else { return nil }
+  }
+
+  var lines: [String] = []
+  let firstGroup = matches[0].range(at: 1).location == NSNotFound ? 2 : 1
+  let firstRange = Range(matches[0].range(at: firstGroup), in: text)!
+  let heading = String(text[..<firstRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+  guard heading.isEmpty || heading.hasSuffix(":") || heading.hasSuffix("：")
+    || declaredListCount(in: heading) != nil else { return nil }
+  if !heading.isEmpty { lines.append(heading) }
+  for (index, match) in matches.enumerated() {
+    let start = Range(match.range, in: text)!.upperBound
+    let end = index + 1 < matches.count
+      ? Range(matches[index + 1].range, in: text)!.lowerBound : text.endIndex
+    let item = trimmedListItem(String(text[start..<end]))
+    guard let initial = item.first else { return nil }
+    if numbers[index].count > 1, !text[text.index(before: start)].isWhitespace,
+       measurementUnitInitials.contains(initial) { return nil }
+    let label = labels[index] + (numbers[index].count == 1 ? "." : "")
+    lines.append("\(label) \(item)")
+  }
+  return lines.joined(separator: "\n")
 }
 
 private func formattedCompactThreeItemList(_ text: String) -> String? {
@@ -72,7 +124,7 @@ private func formattedCompactThreeItemList(_ text: String) -> String? {
 
   let parts = (1...4).compactMap { index -> String? in
     guard let range = Range(match.range(at: index), in: text) else { return nil }
-    return String(text[range]).trimmingCharacters(in: listTrimCharacters)
+    return trimmedListItem(String(text[range]))
   }
   let itemInitials = parts.dropFirst().compactMap(\.first)
   guard parts.count == 4,
@@ -107,8 +159,7 @@ private func formattedInlineList(_ text: String) -> String? {
     let itemEnd = index + 1 < matches.count
       ? Range(matches[index + 1].range, in: text)!.lowerBound
       : text.endIndex
-    let item = String(text[markerRange.upperBound..<itemEnd])
-      .trimmingCharacters(in: listTrimCharacters)
+    let item = trimmedListItem(String(text[markerRange.upperBound..<itemEnd]))
     guard !item.isEmpty else { return nil }
     items.append(item)
   }
@@ -143,8 +194,7 @@ private func formattedSpokenList(_ text: String) -> String? {
     let itemEnd = index + 1 < matches.count
       ? Range(matches[index + 1].range, in: text)!.lowerBound
       : text.endIndex
-    let body = String(text[fullMarkerRange.upperBound..<itemEnd])
-      .trimmingCharacters(in: listTrimCharacters)
+    let body = trimmedListItem(String(text[fullMarkerRange.upperBound..<itemEnd]))
     guard !body.isEmpty else { return nil }
     items.append(body)
   }
@@ -172,6 +222,14 @@ private func normalizedPunctuationSpacing(_ text: String) -> String {
     range: NSRange(text.startIndex..., in: text),
     withTemplate: "$1"
   )
+}
+
+private func trimmedListItem(_ value: String) -> String {
+  var result = value.trimmingCharacters(in: listTrimCharacters.subtracting(CharacterSet(charactersIn: ".")))
+  while result.last == ".", isSentenceEnding(in: result, at: result.index(before: result.endIndex)) {
+    result.removeLast()
+  }
+  return result.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 private func semanticUnitCount(_ text: String) -> Int {
@@ -292,15 +350,18 @@ private func groupedLongParagraphs(_ text: String) -> String {
     }
   }
 
-  return paragraphs.map { $0.joined() }.joined(separator: "\n\n")
+  return paragraphs.map { $0.joined().trimmingCharacters(in: .whitespacesAndNewlines) }
+    .joined(separator: "\n\n")
 }
 
 private func splitSentences(_ text: String) -> [String] {
   var sentences: [String] = []
   var current = ""
-  for character in text {
-    current.append(character)
-    if sentenceEndings.contains(character) {
+  for index in text.indices {
+    current.append(text[index])
+    let next = text.index(after: index)
+    if isSentenceEnding(in: text, at: index),
+       next == text.endIndex || !sentenceEndings.contains(text[next]) {
       sentences.append(current)
       current = ""
     }
@@ -309,16 +370,27 @@ private func splitSentences(_ text: String) -> [String] {
   return sentences
 }
 
-private func withoutSingleSentenceTerminalPunctuation(_ text: String) -> String {
-  for index in text.indices where sentenceEndings.contains(text[index]) {
-    let next = text.index(after: index)
-    guard next < text.endIndex else { continue }
-    if text[index] != "." || text[next].isWhitespace { return text }
+private func isSentenceEnding(in text: String, at index: String.Index) -> Bool {
+  guard sentenceEndings.contains(text[index]) else { return false }
+  guard text[index] == "." else { return true }
+  let next = text.index(after: index)
+  if next < text.endIndex, !text[next].isWhitespace, !sentenceEndings.contains(text[next]) {
+    return false
   }
+  let tokenStart = text[..<index].lastIndex(where: \.isWhitespace)
+    .map { text.index(after: $0) } ?? text.startIndex
+  let token = text[tokenStart...index]
+  return token != "." && token != ".." && !token.hasSuffix("/.") && !token.hasSuffix("/..")
+    && !token.hasSuffix("\\.") && !token.hasSuffix("\\..")
+}
 
+private func withoutSingleSentenceTerminalPunctuation(_ text: String) -> String {
+  guard !text.contains("\n\n"),
+        splitSentences(text).filter({ semanticUnitCount($0) > 0 }).count <= 1 else { return text }
   var result = text
   while let last = result.last, terminalPunctuation.contains(last) {
+    if last == ".", !isSentenceEnding(in: result, at: result.index(before: result.endIndex)) { break }
     result.removeLast()
   }
-  return result
+  return result.trimmingCharacters(in: .whitespacesAndNewlines)
 }

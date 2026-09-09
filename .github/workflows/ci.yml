@@ -22,4 +22,4 @@ jobs:
       - name: Verify architecture
         run: test "$(uname -m)" = "${{ matrix.arch }}"
       - name: Test and compile
-        run: make lint coverage compile-check
+        run: make lint coverage compile-check test-menu

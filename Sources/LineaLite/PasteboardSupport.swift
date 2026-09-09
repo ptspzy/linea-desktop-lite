@@ -1,4 +1,56 @@
 import AppKit
+import ApplicationServices
+
+struct DictationTarget {
+  let processID: pid_t
+  let appName: String?
+  private let element: AXUIElement?
+  private let selection: CFTypeRef?
+
+  @MainActor
+  static func capture() -> DictationTarget? {
+    guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+    let element = focusedElement(processID: app.processIdentifier)
+    var selection: CFTypeRef?
+    if let element {
+      AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selection)
+    }
+    return DictationTarget(processID: app.processIdentifier, appName: app.localizedName,
+                           element: element, selection: selection)
+  }
+
+  @MainActor
+  var stillFocused: Bool {
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == processID,
+          let element, let current = Self.focusedElement(processID: processID),
+          CFEqual(element, current) else { return false }
+    var subrole: CFTypeRef?
+    AXUIElementCopyAttributeValue(current, kAXSubroleAttribute as CFString, &subrole)
+    guard subrole as? String != kAXSecureTextFieldSubrole as String else { return false }
+    if let selection {
+      var currentSelection: CFTypeRef?
+      guard AXUIElementCopyAttributeValue(current, kAXSelectedTextRangeAttribute as CFString,
+                                        &currentSelection) == .success,
+            let currentSelection, CFEqual(selection, currentSelection) else { return false }
+    }
+    return true
+  }
+
+  private static func focusedElement(processID: pid_t) -> AXUIElement? {
+    var value: CFTypeRef?
+    let app = AXUIElementCreateApplication(processID)
+    AXUIElementSetMessagingTimeout(app, 0.15)
+    guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &value) == .success,
+          let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+    let element = unsafeBitCast(value, to: AXUIElement.self)
+    AXUIElementSetMessagingTimeout(element, 0.15)
+    return element
+  }
+}
+
+func canAutomaticallyPaste(targetIsFocused: Bool, modifiers: NSEvent.ModifierFlags) -> Bool {
+  targetIsFocused && modifiers.intersection([.command, .control, .option, .shift]).isEmpty
+}
 
 struct PasteboardSnapshot {
   private let items: [[NSPasteboard.PasteboardType: Data]]

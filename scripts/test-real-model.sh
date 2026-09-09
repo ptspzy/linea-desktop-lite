@@ -8,42 +8,25 @@ MODEL_PATH="${LINEA_MODEL_PATH:-$HOME/Library/Application Support/Linea Lite/mod
 AUDIO="$ROOT/Tests/Fixtures/reference-004.wav"
 REFERENCE="当前模型使用 Qwen3-ASR 0.6B 4-bit MLX balanced。"
 MANIFEST="${LINEA_QUALITY_MANIFEST:-}"
-CHECKER="$ROOT/build/quality-check"
-LOG="$ROOT/build/quality-runtime.log"
-PORT=$((40000 + $$ % 20000))
-while /usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do
-  PORT=$((PORT + 1))
-done
-SERVER_PID=""
 RUNTIME_ARCH="${LINEA_RUNTIME_ARCH:-$(uname -m)}"
-
-run_runtime() {
-  if [[ "$RUNTIME_ARCH" == "$(uname -m)" ]]; then
-    exec "$RUNTIME" "$@"
-  else
-    exec /usr/bin/arch "-$RUNTIME_ARCH" "$RUNTIME" "$@"
-  fi
-}
-
-cleanup() {
-  local status=$?
-  trap - EXIT
-  if [[ -n "$SERVER_PID" ]]; then
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-  fi
-  exit "$status"
-}
-trap cleanup EXIT
+case "$RUNTIME_ARCH" in
+  arm64|x86_64) ;;
+  *) echo "LINEA_RUNTIME_ARCH must be arm64 or x86_64." >&2; exit 2 ;;
+esac
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/linea-quality.XXXXXX")"
+trap 'rm -rf "$WORK_DIR"' EXIT
+CHECKER="$WORK_DIR/quality-check"
+export LINEA_QWEN_RUNTIME="$RUNTIME" LINEA_MODEL_PATH="$MODEL_PATH" LINEA_RUNTIME_ARCH="$RUNTIME_ARCH"
 
 test -x "$RUNTIME"
 test -f "$AUDIO"
 if [[ ! -f "$MODEL_PATH" ]]; then
-  echo "Qwen model not found. Download it in Linea Lite or set LINEA_MODEL_PATH." >&2
+  echo "Qwen model not found. Import it in Linea Lite or set LINEA_MODEL_PATH." >&2
   exit 2
 fi
 
 xcrun swiftc -O -warnings-as-errors -strict-concurrency=complete \
+  -target "$(uname -m)-apple-macosx13.0" \
   -framework AVFoundation \
   "$ROOT/Sources/LineaLite/AudioSegmentation.swift" \
   "$ROOT/Sources/LineaLite/TextCleanup.swift" \
@@ -52,30 +35,8 @@ xcrun swiftc -O -warnings-as-errors -strict-concurrency=complete \
   "$ROOT/Tests/Quality/main.swift" \
   -o "$CHECKER"
 
-run_runtime --server --host 127.0.0.1 --port "$PORT" \
-  --backend qwen3 -m "$MODEL_PATH" -np -nt -l auto --lid-backend off \
-  --ws-port -1 --wyoming-port -1 >"$LOG" 2>&1 &
-SERVER_PID=$!
-for _ in {1..300}; do
-  if curl --fail --silent "http://127.0.0.1:$PORT/health" >/dev/null; then break; fi
-  kill -0 "$SERVER_PID"
-  sleep 0.05
-done
-curl --fail --silent "http://127.0.0.1:$PORT/health" >/dev/null
-
 check_audio() {
-  local audio="$1"
-  local reference="$2"
-  shift 2
-  local response
-  response="$(curl --fail --silent --show-error --max-time 180 \
-    --form "file=@$audio" \
-    --form language=auto \
-    --form lid_backend=off \
-    --form no_timestamps=true \
-    "http://127.0.0.1:$PORT/inference")"
-  test -n "$response"
-  "$CHECKER" "$response" "$reference" "$@"
+  "$CHECKER" "$@"
 }
 
 if [[ -n "$MANIFEST" ]]; then
@@ -83,11 +44,22 @@ if [[ -n "$MANIFEST" ]]; then
   count=0
   total_cer=0
   worst_cer=0
+  /usr/bin/ruby -rjson -e '
+    ARGF.each_line do |line|
+      row = JSON.parse(line)
+      fields = [row.fetch("audio"), row.fetch("reference")]
+      abort "Manifest fields must be nonempty single-line strings" unless fields.all? { |v| v.is_a?(String) && !v.empty? && v !~ /[\t\r\n]/ }
+      puts fields.join("\t")
+    end
+  ' "$MANIFEST" >"$WORK_DIR/manifest.tsv"
   while IFS=$'\t' read -r audio reference; do
     test -f "$audio"
     count=$((count + 1))
-    echo "Human voice quality $count: $(basename "$audio")"
-    result="$(LINEA_MAX_CER=10 check_audio "$audio" "$reference" 2>&1)"
+    echo "Voice quality $count: $(basename "$audio")"
+    if ! result="$(LINEA_MAX_CER=10 check_audio "$audio" "$reference" 2>&1)"; then
+      printf '%s\n' "$result" >&2
+      exit 1
+    fi
     echo "$result"
     cer="$(awk '$1 == "CER" { print $2; exit }' <<<"$result")"
     test -n "$cer"
@@ -95,12 +67,10 @@ if [[ -n "$MANIFEST" ]]; then
     if awk -v cer="$cer" -v worst="$worst_cer" 'BEGIN { exit !(cer > worst) }'; then
       worst_cer="$cer"
     fi
-  done < <(/usr/bin/ruby -rjson -e \
-    'ARGF.each_line { |line| row = JSON.parse(line); puts [row.fetch("audio"), row.fetch("reference")].join("\t") }' \
-    "$MANIFEST")
+  done <"$WORK_DIR/manifest.tsv"
   test "$count" -gt 0
   average_cer="$(awk -v total="$total_cer" -v count="$count" 'BEGIN { print total / count }')"
-  printf 'Human voice corpus: %d recordings, average CER %.4f, worst CER %.4f\n' \
+  printf 'Voice corpus: %d recordings, average CER %.4f, worst CER %.4f\n' \
     "$count" "$average_cer" "$worst_cer"
   awk \
     -v average="$average_cer" \
@@ -109,10 +79,13 @@ if [[ -n "$MANIFEST" ]]; then
     -v maximum_worst="${LINEA_MAX_WORST_CER:-0.75}" \
     'BEGIN {
       if (average > maximum_average || worst > maximum_worst) {
-        printf "Human voice CER gate failed (average %.4f/%.2f, worst %.4f/%.2f)\n", average, maximum_average, worst, maximum_worst > "/dev/stderr"
+        printf "Voice CER gate failed (average %.4f/%.2f, worst %.4f/%.2f)\n", average, maximum_average, worst, maximum_worst > "/dev/stderr"
         exit 1
       }
     }'
 else
   check_audio "$AUDIO" "$REFERENCE" Qwen3-ASR 0.6B 4-bit MLX balanced
 fi
+
+# Synthetic fixture only: three separated utterances cover beginning/middle/end without playback.
+"$CHECKER" --long-fixture "$AUDIO" "$REFERENCE" Qwen3-ASR 0.6B 4-bit MLX balanced

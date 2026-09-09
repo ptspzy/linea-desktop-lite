@@ -16,11 +16,11 @@ ARM_QWEN_ASR_BIN ?= .runtime/macos-arm64/qwen-asr
 X86_QWEN_ASR_BIN ?= .runtime/macos-x86_64/qwen-asr
 ARM_APP_BIN := $(BUILD_DIR)/$(APP_NAME)-arm64
 X86_APP_BIN := $(BUILD_DIR)/$(APP_NAME)-x86_64
-SOURCES := Sources/LineaLite/AudioSegmentation.swift Sources/LineaLite/CaptureHUD.swift Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/HistoryMenuView.swift Sources/LineaLite/HistoryStore.swift Sources/LineaLite/PasteboardSupport.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/QwenRuntime.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/WorkspaceVocabulary.swift Sources/LineaLite/main.swift
-TEST_SOURCES := Sources/LineaLite/AudioSegmentation.swift Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/HistoryStore.swift Sources/LineaLite/PasteboardSupport.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/QwenRuntime.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/WorkspaceVocabulary.swift Tests/main.swift
-COVERAGE_SOURCES := Sources/LineaLite/AudioSegmentation.swift Sources/LineaLite/CaptureVisuals.swift Sources/LineaLite/HistoryStore.swift Sources/LineaLite/PasteboardSupport.swift Sources/LineaLite/PushToTalkState.swift Sources/LineaLite/QwenRuntime.swift Sources/LineaLite/TextCleanup.swift Sources/LineaLite/WorkspaceVocabulary.swift
+SOURCES := $(wildcard Sources/LineaLite/*.swift)
+COVERAGE_SOURCES := $(filter-out Sources/LineaLite/main.swift Sources/LineaLite/CaptureHUD.swift Sources/LineaLite/HistoryMenuView.swift,$(SOURCES))
+TEST_SOURCES := $(COVERAGE_SOURCES) $(wildcard Tests/*.swift)
 
-.PHONY: build build-universal compile-check coverage lint run test test-quality test-quality-corpus test-quality-x86 smoke verify package release runtime-arm64 runtime-x86_64 runtimes clean
+.PHONY: build build-universal compile-check coverage lint run test ui-test-build test-menu test-quality test-quality-corpus test-quality-x86 smoke verify package release runtime-arm64 runtime-x86_64 runtimes clean
 
 build:
 	test -x "$(QWEN_ASR_BIN)"
@@ -70,6 +70,14 @@ build-universal:
 run: build
 	open "$(APP_DIR)"
 
+ui-test-build:
+	$(MAKE) build BUILD_DIR=build/ui-test SWIFT_FLAGS='$(SWIFT_FLAGS) -DLINEA_UI_TEST'
+
+test-menu:
+	mkdir -p "$(BUILD_DIR)/menu-snapshots"
+	xcrun swiftc $(SWIFT_FLAGS) -DHISTORY_REGRESSION_STANDALONE -DHISTORY_MENU_REGRESSION -framework AppKit Sources/LineaLite/HistoryStore.swift Sources/LineaLite/HistoryMenuView.swift Tests/HistoryRegression.swift -o "$(BUILD_DIR)/menu-tests"
+	"$(BUILD_DIR)/menu-tests" "$(BUILD_DIR)/menu-snapshots"
+
 compile-check:
 	mkdir -p "$(BUILD_DIR)"
 	xcrun swiftc $(SWIFT_FLAGS) -target $(NATIVE_ARCH)-apple-macosx$(MACOS_DEPLOYMENT_TARGET) -framework AppKit -framework ApplicationServices -framework AVFoundation $(SOURCES) -o "$(BUILD_DIR)/compile-check"
@@ -104,6 +112,7 @@ verify:
 	$(MAKE) clean
 	$(MAKE) lint
 	$(MAKE) coverage
+	$(MAKE) test-menu
 	$(MAKE) package
 	$(MAKE) smoke
 	$(MAKE) test-quality
@@ -117,6 +126,7 @@ release:
 	$(MAKE) clean
 	$(MAKE) lint
 	$(MAKE) coverage
+	$(MAKE) test-menu
 	$(MAKE) package SIGN_IDENTITY="$(SIGN_IDENTITY)" SIGN_FLAGS="--options runtime --timestamp"
 	$(MAKE) smoke
 	$(MAKE) test-quality

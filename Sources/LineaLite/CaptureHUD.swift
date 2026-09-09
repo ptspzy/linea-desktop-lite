@@ -38,10 +38,21 @@ final class CaptureHUD {
     panel.isReleasedWhenClosed = false
   }
 
-  func showRecording() {
+  func showStarting() {
+    showProcessing()
+    panel.setAccessibilityLabel("麦克风启动中")
+  }
+
+  func showRecording(latched: Bool = false) {
     cancelPendingHide()
     phase = 0
     let root = makeRoot()
+    let indicator = CALayer()
+    indicator.frame = NSRect(x: 6, y: 12, width: 6, height: 6)
+    indicator.cornerRadius = latched ? 1 : 3
+    indicator.backgroundColor = NSColor.systemRed.cgColor
+    root.addSublayer(indicator)
+    panel.setAccessibilityLabel(latched ? "持续录音中，再按快捷键结束" : "录音中，松开快捷键结束")
     let heights: [CGFloat] = [8, 14, 21, 12, 26, 17, 23, 13, 19, 15, 9, 18, 11]
     let width: CGFloat = 3
     let gap: CGFloat = 3.5
@@ -101,6 +112,8 @@ final class CaptureHUD {
     animation.fromValue = 0.03
     animation.toValue = 0.98
     animation.duration = 2.4
+    animation.autoreverses = true
+    animation.repeatCount = .infinity
     animation.timingFunction = CAMediaTimingFunction(name: .linear)
     progress.add(animation, forKey: "processing")
     show(root)

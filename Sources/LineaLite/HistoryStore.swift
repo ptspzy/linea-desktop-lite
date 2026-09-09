@@ -71,81 +71,171 @@ func filteredHistoryEntries(_ entries: [HistoryEntry], query: String) -> [Histor
 final class HistoryStore {
   private let url: URL
   private let limit: Int
-  private var canSave = true
+  private var needsRecovery = false
   private(set) var entries: [HistoryEntry]
+  private(set) var retention: HistoryRetention
   private(set) var recoveredCorruptFileURL: URL?
 
   init(url: URL = HistoryStore.defaultURL, limit: Int = 500) {
     self.url = url
-    self.limit = limit
+    self.limit = max(1, limit)
+    retention = .keep500
     do {
-      entries = try Self.load(from: url)
+      let archive = try Self.load(from: url)
+      entries = archive.entries
+      retention = archive.retention
     } catch {
       entries = []
       do {
         recoveredCorruptFileURL = try Self.preserveCorruptHistory(at: url)
       } catch {
-        canSave = false
+        needsRecovery = true
       }
     }
     entries.sort { $0.createdAt > $1.createdAt }
-    entries = Array(entries.prefix(limit))
   }
 
   @discardableResult
-  func append(_ entry: HistoryEntry) -> Bool {
-    let previous = entries
-    entries.append(entry)
-    entries.sort { $0.createdAt > $1.createdAt }
-    entries = Array(entries.prefix(limit))
-    guard save() else {
-      entries = previous
-      return false
-    }
-    return true
+  func append(_ entry: HistoryEntry, now: Date = Date()) -> Bool {
+    persist(retained(entries + [entry], policy: retention, now: now), retention: retention)
+  }
+
+  @discardableResult
+  func delete(id: String) -> Bool {
+    guard entries.contains(where: { $0.id == id }) else { return false }
+    return persist(entries.filter { $0.id != id }, retention: retention)
+  }
+
+  @discardableResult
+  func update(id: String, text: String) -> Bool {
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          let index = entries.firstIndex(where: { $0.id == id }) else { return false }
+    var updated = entries
+    let entry = entries[index]
+    updated[index] = HistoryEntry(
+      id: entry.id, createdAt: entry.createdAt, text: text,
+      duration: entry.duration, appName: entry.appName
+    )
+    return persist(updated, retention: retention)
+  }
+
+  @discardableResult
+  func setRetention(_ retention: HistoryRetention, now: Date = Date()) -> Bool {
+    persist(retained(entries, policy: retention, now: now), retention: retention)
+  }
+
+  @discardableResult
+  func applyRetention(now: Date = Date()) -> Bool {
+    let retained = retained(entries, policy: retention, now: now)
+    guard retained != entries else { return true }
+    return persist(retained, retention: retention)
   }
 
   @discardableResult
   func clear() -> Bool {
-    let previous = entries
-    entries.removeAll()
-    guard save() else {
-      entries = previous
-      return false
-    }
-    return true
+    persist([], retention: retention)
   }
 
-  private func save() -> Bool {
-    guard canSave else { return false }
+  @discardableResult
+  func clearAll() -> Bool {
+    guard clear() else { return false }
     do {
-      try FileManager.default.createDirectory(
-        at: url.deletingLastPathComponent(),
-        withIntermediateDirectories: true
+      let files = try FileManager.default.contentsOfDirectory(
+        at: url.deletingLastPathComponent(), includingPropertiesForKeys: [.isRegularFileKey]
       )
-      let encoder = JSONEncoder()
-      encoder.dateEncodingStrategy = .millisecondsSince1970
-      try encoder.encode(entries).write(to: url, options: .atomic)
-      try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+      let prefix = Self.backupPrefix(for: url)
+      for file in files where file.lastPathComponent.hasPrefix(prefix) && file.pathExtension == "json" {
+        let identifier = String(file.deletingPathExtension().lastPathComponent.dropFirst(prefix.count))
+        guard UUID(uuidString: identifier) != nil,
+              try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
+        try FileManager.default.removeItem(at: file)
+        if recoveredCorruptFileURL?.lastPathComponent == file.lastPathComponent {
+          recoveredCorruptFileURL = nil
+        }
+      }
       return true
     } catch {
       return false
     }
   }
 
-  private static func load(from url: URL) throws -> [HistoryEntry] {
-    guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+  private func retained(
+    _ entries: [HistoryEntry], policy: HistoryRetention, now: Date
+  ) -> [HistoryEntry] {
+    let cutoff = policy.days.flatMap {
+      Calendar.current.date(byAdding: .day, value: 1 - $0, to: Calendar.current.startOfDay(for: now))
+    }
+    return Array(entries.filter { entry in cutoff.map { entry.createdAt >= $0 } ?? true }
+      .sorted { $0.createdAt > $1.createdAt }.prefix(limit))
+  }
+
+  private func persist(_ updated: [HistoryEntry], retention: HistoryRetention) -> Bool {
+    do {
+      let encoder = JSONEncoder()
+      encoder.dateEncodingStrategy = .millisecondsSince1970
+      let data = try encoder.encode(HistoryArchive(entries: updated, retention: retention))
+      try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      if needsRecovery {
+        if FileManager.default.fileExists(atPath: url.path) {
+          recoveredCorruptFileURL = try Self.preserveCorruptHistory(at: url)
+        }
+        needsRecovery = false
+      }
+      let temporaryURL = url.deletingLastPathComponent().appendingPathComponent(".history-\(UUID().uuidString).tmp")
+      defer { try? FileManager.default.removeItem(at: temporaryURL) }
+      guard FileManager.default.createFile(
+        atPath: temporaryURL.path, contents: data, attributes: [.posixPermissions: 0o600]
+      ) else { return false }
+      if FileManager.default.fileExists(atPath: url.path) {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else { return false }
+        _ = try FileManager.default.replaceItemAt(url, withItemAt: temporaryURL, options: .usingNewMetadataOnly)
+      } else {
+        try FileManager.default.moveItem(at: temporaryURL, to: url)
+      }
+      entries = updated
+      self.retention = retention
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private struct HistoryArchive: Codable {
+    let entries: [HistoryEntry]
+    let retention: HistoryRetention
+  }
+
+  private static func load(from url: URL) throws -> HistoryArchive {
+    guard FileManager.default.fileExists(atPath: url.path) else {
+      return HistoryArchive(entries: [], retention: .keep500)
+    }
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .millisecondsSince1970
-    return try decoder.decode([HistoryEntry].self, from: Data(contentsOf: url))
+    let data = try Data(contentsOf: url)
+    if let legacy = try? decoder.decode([HistoryEntry].self, from: data) {
+      return HistoryArchive(entries: legacy, retention: .keep500)
+    }
+    return try decoder.decode(HistoryArchive.self, from: data)
+  }
+
+  private static func backupPrefix(for url: URL) -> String {
+    "\(url.deletingPathExtension().lastPathComponent)-corrupt-"
   }
 
   private static func preserveCorruptHistory(at url: URL) throws -> URL {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    guard attributes[.type] as? FileAttributeType == .typeRegular else {
+      throw CocoaError(.fileReadUnknown)
+    }
     let backupURL = url.deletingLastPathComponent().appendingPathComponent(
-      "history-corrupt-\(UUID().uuidString).json"
+      "\(backupPrefix(for: url))\(UUID().uuidString).json"
     )
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     try FileManager.default.moveItem(at: url, to: backupURL)
-    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backupURL.path)
     return backupURL
   }
 
@@ -153,4 +243,17 @@ final class HistoryStore {
     .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     .appendingPathComponent("Linea Lite", isDirectory: true)
     .appendingPathComponent("history.json")
+}
+
+enum HistoryRetention: Int, Codable, CaseIterable {
+  case keep500 = 0
+  case days7 = 7
+  case days30 = 30
+  case days90 = 90
+
+  var days: Int? { self == .keep500 ? nil : rawValue }
+
+  var title: String {
+    self == .keep500 ? "保留最近 500 条（默认）" : "保留最近 \(rawValue) 天（最多 500 条）"
+  }
 }
