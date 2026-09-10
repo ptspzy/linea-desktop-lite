@@ -166,6 +166,18 @@ final class CaptureHUD {
     hide(after: 0.22)
   }
 
+  func showCopied() {
+    show(makeRoot())
+    let message = NSTextField(labelWithString: "已复制 · ⌘V 粘贴")
+    message.font = .systemFont(ofSize: 11, weight: .medium)
+    message.textColor = .systemYellow
+    message.alignment = .center
+    message.frame = NSRect(x: 6, y: 8, width: size.width - 12, height: 15)
+    panel.contentView?.addSubview(message)
+    panel.setAccessibilityLabel("已复制，未自动写入，请手动粘贴")
+    hide(after: 3)
+  }
+
   func showError() {
     let root = makeRoot(error: true)
     let heights: [CGFloat] = [6, 14, 6]

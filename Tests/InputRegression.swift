@@ -28,9 +28,23 @@ func runInputRegressionTests() async throws {
                                 isRepeat: false, shortcut: shortcut) == .pressed)
   precondition(state.transition(keyCode: 2, type: .keyUp, flags: shortcut.flags,
                                 isRepeat: false, shortcut: shortcut) == .released)
-  precondition(canAutomaticallyPaste(targetIsFocused: true, modifiers: []))
-  precondition(!canAutomaticallyPaste(targetIsFocused: false, modifiers: []))
-  precondition(!canAutomaticallyPaste(targetIsFocused: true, modifiers: .option))
+  for subrole in [nil, "AXTextField", "AXUnknown"] {
+    precondition(automaticPasteBlockReason(allowInsertion: true, accessibilityTrusted: true,
+      modifiers: [], secureInput: false, focusedSubrole: subrole) == nil,
+      "Missing AX focus metadata must not block current-cursor dictation")
+  }
+  precondition(automaticPasteBlockReason(allowInsertion: false, accessibilityTrusted: true,
+    modifiers: [], secureInput: false, focusedSubrole: nil) == "retry-copy-only")
+  precondition(automaticPasteBlockReason(allowInsertion: true, accessibilityTrusted: false,
+    modifiers: [], secureInput: false, focusedSubrole: nil) == "accessibility-not-trusted")
+  for modifier: NSEvent.ModifierFlags in [.option, .control, .command, .shift] {
+    precondition(automaticPasteBlockReason(allowInsertion: true, accessibilityTrusted: true,
+      modifiers: modifier, secureInput: false, focusedSubrole: nil) == "modifiers-still-held")
+  }
+  precondition(automaticPasteBlockReason(allowInsertion: true, accessibilityTrusted: true,
+    modifiers: [], secureInput: true, focusedSubrole: nil) == "secure-field")
+  precondition(automaticPasteBlockReason(allowInsertion: true, accessibilityTrusted: true,
+    modifiers: [], secureInput: false, focusedSubrole: "AXSecureTextField") == "secure-field")
 
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -70,5 +84,5 @@ func runInputRegressionTests() async throws {
   } catch is CancellationError {
     precondition(ProcessInfo.processInfo.systemUptime - cancelStarted < 2, "Cancellation must stop work promptly")
   }
-  print("PASS: custom shortcuts, focus guard and private retry lifecycle")
+  print("PASS: custom shortcuts, current-cursor delivery and private retry lifecycle")
 }

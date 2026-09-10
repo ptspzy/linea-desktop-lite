@@ -54,7 +54,8 @@ enum HUDRegression {
         if title == "识别中" { try snapshot(panel.contentView!, named: latched ? "recording-tap" : "recording-hold") }
       }
     }
-    for (show, label) in [(hud.showComplete, "已完成"), (hud.showError, "处理失败")] {
+    for (show, label) in [(hud.showComplete, "已完成"), (hud.showCopied, "已复制，未自动写入，请手动粘贴"),
+                           (hud.showError, "处理失败")] {
       hud.showProcessing()
       show()
       precondition(panel.accessibilityLabel() == label)
@@ -63,6 +64,13 @@ enum HUDRegression {
         let finish = fill.animation(forKey: "processing-complete") as! CABasicAnimation
         precondition(fill.bounds.width == frame.width - 4 && !finish.autoreverses)
         precondition((finish.fromValue as! CGFloat) < (finish.toValue as! CGFloat))
+      } else if label.hasPrefix("已复制") {
+        let view = panel.contentView!
+        let message = view.subviews.compactMap { $0 as? NSTextField }.first!
+        precondition(view.bounds.contains(message.frame))
+        precondition(message.intrinsicContentSize.width <= message.bounds.width)
+        precondition(message.stringValue.contains("⌘V"))
+        try snapshot(view, named: "copied-only")
       }
       hud.showProcessing()
       RunLoop.current.run(until: Date().addingTimeInterval(1.3))

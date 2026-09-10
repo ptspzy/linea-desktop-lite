@@ -17,7 +17,7 @@ Included:
   idioms, time expressions, and detected code/paths are preserved. Fractional zeros are not rounded away.
 - Choose right `Option`, right `Control`, right `Command`, or an exclusive custom modifier/key combination; tap to start/stop or hold for push-to-talk. Escape cancels recording or pending output.
 - Linea-style floating waveform while recording and processing.
-- Paste only when the original application, focused element and available selection still match. Otherwise retain the result in the clipboard/history without pasting into another field. A dispatched paste is not claimed as confirmed insertion.
+- Paste completed dictation at the current keyboard cursor, even when the editor does not expose AX focus metadata or the cursor moved during recording. Accessibility permission, released modifiers, and secure-input/password-field checks still apply. Retrying an older failed recording remains copy-only. A dispatched paste is not claimed as confirmed insertion.
 - Restore the previous clipboard after automatic paste without overwriting newer clipboard changes.
 - Searchable local transcript history, full-text preview, copy/correction/delete actions, and a compact 16-week activity graph. Counts describe retained records, not lifetime usage; the menu bar shows today's retained count.
 - History retention of up to 500 records by default, with explicit 7/30/90-day options. Shortening retention or clearing history requires confirmation.

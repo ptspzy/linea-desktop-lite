@@ -498,7 +498,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private var accessibilityTimer: Timer?
   private var levelTimer: Timer?
   private var targetAppName: String?
-  private var insertionTarget: DictationTarget?
+  private var pasteBlockReason: String?
   private var captureID = UUID()
   private var captureRequestedAt: TimeInterval = 0
   private var captureReadyDelay: TimeInterval = 0
@@ -634,6 +634,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   @objc private func showTestMenu(_ sender: Any?) { statusItem.button?.performClick(sender) }
+
   #endif
 
   private func buildMenu() {
@@ -876,7 +877,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       }
       self.refreshMenu()
     }
-    insertionTarget = DictationTarget.capture()
   }
 
   private func finishMicrophoneDenied() {
@@ -915,9 +915,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
           self.refreshMenu()
         }
         let appName = self.targetAppName
-        let target = self.insertionTarget
         self.targetAppName = nil
-        self.insertionTarget = nil
 
         switch result {
         case .success(let result):
@@ -941,7 +939,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             self.refreshMenu()
             return
           }
-          let inserted = await self.insertAtCursor(text, target: allowInsertion ? target : nil, id: id)
+          let inserted = await self.insertAtCursor(text, allowInsertion: allowInsertion, id: id)
           guard self.captureID == id else { return }
           let saved = self.history.append(HistoryEntry(
             text: text,
@@ -953,15 +951,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
           } else if !saved {
             self.status = inserted == true ? "已发送粘贴，但历史保存失败" : "已复制，但历史保存失败"
           } else {
-            self.status = inserted == true ? "已发送粘贴 · \(text.count) 字" : "已复制 · 焦点变化或无法确认，请手动粘贴"
+            self.status = inserted == true ? "已发送粘贴 · \(text.count) 字" : "未自动写入 · 内容已复制"
           }
           self.saveDiagnostics(
             audioDuration: result.audioDuration,
             recognitionDuration: result.recognitionDuration,
             postProcessingDuration: ProcessInfo.processInfo.systemUptime - postProcessingStartedAt,
-            outcome: (inserted == nil ? "Delivery failed" : inserted == true ? "Paste dispatched" : "Copied only") + "; " + result.runtimeSummary
+            outcome: (inserted == nil ? "Delivery failed" : inserted == true ? "Paste dispatched"
+              : "Copied only [\(self.pasteBlockReason ?? "unknown")]") + "; " + result.runtimeSummary
           )
-          if inserted == nil { self.hud.showError() } else { self.hud.showComplete() }
+          if inserted == nil { self.hud.showError() }
+          else if inserted == true { self.hud.showComplete() }
+          else { self.hud.showCopied() }
         case .failure(let error):
           if let error = error as? DictationError, case .cancelled = error {
             self.status = "已取消"
@@ -977,7 +978,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     }
   }
 
-  private func insertAtCursor(_ text: String, target: DictationTarget?, id: UUID) async -> Bool? {
+  private func insertAtCursor(_ text: String, allowInsertion: Bool, id: UUID) async -> Bool? {
+    pasteBlockReason = nil
     for _ in 0..<20 where !NSEvent.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
       try? await Task.sleep(for: .milliseconds(50))
     }
@@ -989,15 +991,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       return nil
     }
 
-    guard AXIsProcessTrusted(),
-          canAutomaticallyPaste(targetIsFocused: target?.stillFocused == true,
-                                modifiers: NSEvent.modifierFlags) else {
+    let trusted = AXIsProcessTrusted()
+    pasteBlockReason = automaticPasteBlockReason(
+      allowInsertion: allowInsertion, accessibilityTrusted: trusted,
+      modifiers: NSEvent.modifierFlags, secureInput: IsSecureEventInputEnabled(),
+      focusedSubrole: allowInsertion && trusted ? focusedFieldSubrole() : nil
+    )
+    guard pasteBlockReason == nil else {
       return false
     }
 
     let source = CGEventSource(stateID: .hidSystemState)
     guard let down = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: true),
           let up = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: false) else {
+      pasteBlockReason = "event-creation-failed"
       return false
     }
     down.flags = .maskCommand
@@ -1026,7 +1033,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     isStarting = false
     shortcut.reset()
     engine.cancelRecording()
-    insertionTarget = nil
     targetAppName = nil
     stopLevelUpdates()
     hud.hide()
@@ -1037,7 +1043,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   @objc private func retryDictation(_ sender: Any?) {
     guard !engine.isBusy, !isStarting, engine.recovery.available() != nil else { return }
     targetAppName = nil
-    insertionTarget = nil
     captureReadyDelay = 0
     status = "正在重试上次录音"
     hud.showProcessing()

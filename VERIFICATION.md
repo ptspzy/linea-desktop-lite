@@ -1,3 +1,55 @@
+# 0.2.3 Current-Cursor Delivery
+
+Local run: 2026-09-10. Two subsequent user captures reported
+`capture-focus-unavailable(-25212)`: the editor returned `kAXErrorNoValue` for its focus
+attribute. Recognition succeeded, but the original-target check prevented Cmd+V.
+
+The user explicitly requested insertion at the current cursor. The earlier original-field
+matching policy is therefore replaced: normal dictation sends Cmd+V to the live keyboard
+focus, without requiring AX focus/selection metadata from the editor. Accessibility
+permission, held modifiers, secure event input and detectable password fields still block
+automatic delivery. Cancellation and copy-only retry of an older recording are preserved.
+Copy-only fallback has a distinct HUD hint and fixed diagnostic reason codes.
+
+The regression for missing AX focus failed against the old policy, then passed with the
+new policy. `make lint test`, `make coverage test-hud package`, and `make smoke` passed.
+Core line coverage is 85.36%; this is not whole-app or end-to-end coverage. The Universal
+model-free DMG verifies, and both architecture slices still target macOS 13.0.
+
+The existing Cmd+V transport is unchanged from the pre-focus-guard implementation.
+A temporary AppKit recipient was exercised through Computer, but empty/duplicated field
+observations were inconsistent; it was not accepted as end-to-end proof, and the temporary
+recipient/activation scaffolding was removed. The actual ChatGPT app remains inaccessible
+to Computer. Real-editor insertion is not claimed as verified by these automated checks.
+No speech-model or formatter change was made, and no audio was played.
+The final normal 0.2.3 app is installed and running; its binary matches the verified
+Universal build, no test controls are included, and the production history checksum
+remains unchanged. The previous normal and diagnostic bundles are kept in `build/rollback`.
+
+The diagnostic checkpoint below is historical, not the final 0.2.3 behavior.
+
+# Cursor Delivery Diagnostic Checkpoint
+
+Local run: 2026-09-10. The goal is reliable cursor insertion without pasting into a
+different field or deleting existing history. Four of the last five production summaries
+reported successful recognition followed by `Copied only`, all targeting ChatGPT.
+The old summaries do not identify which focus/permission check blocked delivery, so the
+precise root cause is not established. No focus protection has been removed.
+
+The installed local diagnostic build adds fixed, text-free reason codes for unavailable
+capture/delivery focus, changed application/element/selection, missing accessibility
+permission, held modifiers and event creation failure. Copy-only results now show a
+distinct paste hint instead of the completion animation. `make test` and `make test-hud
+build` passed; the copy-only hint fits the unchanged HUD and its timer cannot dismiss a
+subsequent recording. The installed binary matches the tested build; the production
+history checksum is unchanged. No audio playback or volume change was made.
+
+Computer access to the target ChatGPT app was refused by the tool, so no alternate API
+was used to inspect or control that app. A physical shortcut test by the user is needed
+to collect the specific failure reason. Automatic cursor delivery is **not yet verified
+as fixed**. This diagnostic build is not a new distribution package; the prior 0.2.2
+bundle is retained under `build/rollback/Linea Lite 0.2.2.app`.
+
 # 0.2.2 Feedback and Number Formatting
 
 The user prefers the original left-to-right visual feedback over the 0.2.1 spinner.
