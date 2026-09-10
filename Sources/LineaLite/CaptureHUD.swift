@@ -112,7 +112,6 @@ final class CaptureHUD {
     fill.anchorPoint = CGPoint(x: 0, y: 0.5)
     fill.position = CGPoint(x: 0, y: clip.bounds.midY)
     fill.bounds = NSRect(x: 0, y: 0, width: clip.bounds.width * 0.9, height: clip.bounds.height)
-    fill.cornerRadius = clip.cornerRadius
     fill.masksToBounds = true
     fill.backgroundColor = NSColor(srgbRed: 0.73, green: 0.72, blue: 0.68, alpha: 0.32).cgColor
     clip.addSublayer(fill)
@@ -148,10 +147,14 @@ final class CaptureHUD {
     let previousWidth = previous?.name == "processing-fill"
       ? (previous?.presentation()?.bounds.width ?? previous?.bounds.width) : nil
     let root = makeRoot()
+    let clip = CALayer()
+    clip.frame = NSRect(x: 2, y: 2, width: size.width - 4, height: size.height - 4)
+    clip.cornerRadius = clip.bounds.height / 2
+    clip.masksToBounds = true
+    root.addSublayer(clip)
     let fill = CALayer()
     fill.anchorPoint = CGPoint(x: 0, y: 0.5)
-    fill.frame = NSRect(x: 2, y: 2, width: size.width - 4, height: size.height - 4)
-    fill.cornerRadius = (size.height - 4) / 2
+    fill.frame = clip.bounds
     fill.backgroundColor = NSColor(srgbRed: 0.73, green: 0.72, blue: 0.68, alpha: 0.32).cgColor
     if let previousWidth {
       let finish = CABasicAnimation(keyPath: "bounds.size.width")
@@ -160,7 +163,7 @@ final class CaptureHUD {
       finish.duration = 0.16
       fill.add(finish, forKey: "processing-complete")
     }
-    root.addSublayer(fill)
+    clip.addSublayer(fill)
     show(root)
     panel.setAccessibilityLabel("已完成")
     hide(after: 0.22)

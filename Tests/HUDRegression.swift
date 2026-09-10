@@ -20,6 +20,7 @@ enum HUDRegression {
       let sweep = fill.sublayers!.first!.animation(forKey: "processing-sweep") as! CABasicAnimation
       precondition(view.subviews.isEmpty && panel.frame == frame, "No spinner/text or layout shift")
       precondition(fill.anchorPoint.x == 0 && fill.position.x == 0)
+      precondition(fill.cornerRadius == 0, "The moving progress edge must be a vertical line")
       precondition(advance.keyPath == "bounds.size.width" && !advance.autoreverses && advance.repeatCount == 0)
       precondition((advance.fromValue as! CGFloat) < (advance.toValue as! CGFloat))
       precondition(fill.bounds.width < clip.bounds.width && clip.bounds.contains(fill.frame))
@@ -36,6 +37,19 @@ enum HUDRegression {
           previous = width
         }
         try snapshot(view, named: "processing")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.bounds.size.width = clip.bounds.width / 2
+        CATransaction.commit()
+        let bitmap = try snapshot(view, named: "processing-midpoint")
+        let scale = CGFloat(bitmap.pixelsWide) / view.bounds.width
+        let edge = Int((clip.frame.minX + fill.frame.maxX) * scale)
+        for y: CGFloat in [6, 15, 24] {
+          let inside = bitmap.colorAt(x: edge - 2, y: Int(y * scale))!.usingColorSpace(.deviceRGB)!
+          let outside = bitmap.colorAt(x: edge + 2, y: Int(y * scale))!.usingColorSpace(.deviceRGB)!
+          precondition(inside.redComponent > outside.redComponent + 0.08,
+                       "The rendered leading edge must stay filled from top to bottom, not form an arc")
+        }
       }
       for latched in [false, true] {
         hud.showRecording(latched: latched)
@@ -60,8 +74,11 @@ enum HUDRegression {
       show()
       precondition(panel.accessibilityLabel() == label)
       if label == "已完成" {
-        let fill = panel.contentView!.layer!.sublayers!.first!
+        let clip = panel.contentView!.layer!.sublayers!.first!
+        let fill = clip.sublayers!.first!
         let finish = fill.animation(forKey: "processing-complete") as! CABasicAnimation
+        precondition(clip.masksToBounds && clip.cornerRadius > 0 && fill.cornerRadius == 0,
+                     "Completion must keep the same straight moving edge inside the fixed track")
         precondition(fill.bounds.width == frame.width - 4 && !finish.autoreverses)
         precondition((finish.fromValue as! CGFloat) < (finish.toValue as! CGFloat))
       } else if label.hasPrefix("已复制") {
@@ -81,14 +98,16 @@ enum HUDRegression {
     print("PASS: one-way waiting fill, no premature completion, compact recording marks and state cleanup")
   }
 
-  @MainActor
-  private static func snapshot(_ view: NSView, named name: String) throws {
-    guard CommandLine.arguments.count > 1 else { return }
+  @MainActor @discardableResult
+  private static func snapshot(_ view: NSView, named name: String) throws -> NSBitmapImageRep {
     let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
     view.cacheDisplay(in: view.bounds, to: bitmap)
-    try bitmap.representation(using: .png, properties: [:])!.write(
-      to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("\(name).png")
-    )
+    if CommandLine.arguments.count > 1 {
+      try bitmap.representation(using: .png, properties: [:])!.write(
+        to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("\(name).png")
+      )
+    }
+    return bitmap
   }
 }
 #endif

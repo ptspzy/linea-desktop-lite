@@ -1,3 +1,19 @@
+# 0.2.4 Straight-Edge Progress
+
+Local run: 2026-09-10. The moving fill now has a vertical leading edge, including the
+completion animation; rounding belongs only to the fixed outer track. The waiting fill
+continues left-to-right and stays below full width until the success callback completes
+the final animation. It remains a waiting affordance, not a measured ASR percentage.
+
+The new straight-edge assertion failed on the old implementation. `make test-hud` now
+passes, including pixel samples at the top/middle/bottom of the rendered leading edge,
+nondecreasing animation widths beyond eight seconds, success-only full width, and state
+cleanup. The midpoint screenshot was visually checked. Recognition and insertion logic
+are unchanged; no audio playback or volume changes were used for this UI test.
+`make lint package smoke` also passed. Normal 0.2.4 is installed and running, its binary
+matches the verified Universal build, and the existing history checksum is unchanged.
+The prior 0.2.3 app is retained under `build/rollback`.
+
 # 0.2.3 Current-Cursor Delivery
 
 Local run: 2026-09-10. Two subsequent user captures reported
