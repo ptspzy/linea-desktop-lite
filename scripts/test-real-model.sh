@@ -87,6 +87,7 @@ else
   check_audio "$AUDIO" "$REFERENCE" Qwen3-ASR 0.6B 4-bit MLX balanced
   check_audio "$ROOT/Tests/Fixtures/spoken-decimal.wav" "数值是3.14159263" 3.14159263
   check_audio "$ROOT/Tests/Fixtures/developer-branch.wav" "分支是dev/1.1" "dev/1.1"
+  LINEA_MAX_CER=0 check_audio "$ROOT/Tests/Fixtures/developer-spelled-branch.wav" "dev/1.1" "dev/1.1"
   check_audio "$ROOT/Tests/Fixtures/developer-list.wav" \
     $'1. 修复登录\n2. 补充测试\n3. 发布版本' $'1. 修复登录\n2. 补充测试\n3. 发布版本'
   check_audio "$ROOT/Tests/Fixtures/developer-paragraphs.wav" \

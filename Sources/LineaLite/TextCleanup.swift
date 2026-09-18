@@ -118,7 +118,7 @@ private let spokenDigits: [Character: String] = [
 private let developerIdentifierExpression = try! NSRegularExpression(
   pattern: #"""
     (?<![A-Za-z0-9_./\\-])(?:
-      ((?i:dev|develop|release|hotfix|feature|bugfix|d\h+e\h+v)|戴夫|德夫|迪夫)
+      ((?i:dev|develop|release|hotfix|feature|bugfix|d[.．\h]+e[.．\h]+v[.．]?)|戴夫|德夫|迪夫)
       \h*([/／]|正?斜杠|(?i:slash))?\h*
       ([0-9零〇一二两三四五六七八九十百千]+(?:\h*(?:点|[.．])\h*[0-9零〇一二两三四五六七八九十百千]+)+)
       |([vV])([0-9零〇一二两三四五六七八九十百千]+(?:\h*(?:点|[.．])\h*[0-9零〇一二两三四五六七八九十百千]+)+)
@@ -132,12 +132,18 @@ private func normalizedDeveloperIdentifiers(_ text: String) -> String {
   for match in unquotedMatches(developerIdentifierExpression, in: text).reversed() {
     let isBranch = match.range(at: 1).location != NSNotFound
     let inferredBranch = isBranch && match.range(at: 2).location == NSNotFound
-    if inferredBranch {
+    let prefix = (text as NSString).substring(with: match.range(at: isBranch ? 1 : 4))
+    let version = (text as NSString).substring(with: match.range(at: isBranch ? 3 : 5))
+    let spelledDev = prefix.contains { $0.isWhitespace || $0 == "." || $0 == "．" }
+    let standaloneSpokenDev = prefix.lowercased() == "dev"
+      && version.unicodeScalars.contains { $0.properties.isIdeographic }
+      && (text as NSString).replacingCharacters(in: match.range, with: "")
+        .trimmingCharacters(in: listTrimCharacters).isEmpty
+    if inferredBranch && !spelledDev && !standaloneSpokenDev {
       let suffix = (text as NSString).substring(from: NSMaxRange(match.range))
       guard suffix.range(of: #"^\h*分支"#, options: .regularExpression) != nil else { continue }
     }
-    let prefix = (text as NSString).substring(with: match.range(at: isBranch ? 1 : 4))
-    let raw = (text as NSString).substring(with: match.range(at: isBranch ? 3 : 5))
+    let raw = version
       .replacingOccurrences(of: "．", with: "点").replacingOccurrences(of: ".", with: "点")
       .filter { !$0.isWhitespace }
     let parts = raw.split(separator: "点", omittingEmptySubsequences: false)
@@ -145,9 +151,9 @@ private func normalizedDeveloperIdentifiers(_ text: String) -> String {
     guard numbers.count == parts.count else { continue }
     let original = (text as NSString).substring(with: match.range)
     let spokenBranch = isBranch && original.unicodeScalars.contains { $0.properties.isIdeographic }
-    let name = ["戴夫", "德夫", "迪夫"].contains(prefix) || prefix.contains(where: \.isWhitespace)
+    let name = ["戴夫", "德夫", "迪夫"].contains(prefix) || spelledDev
       ? "dev" : (inferredBranch || (spokenBranch && prefix == prefix.capitalized) ? prefix.lowercased() : prefix)
-    // An omitted slash requires explicit branch context; arbitrary paths stay literal.
+    // Spelled DEV and standalone spoken DEV versions also imply a branch, not arbitrary paths.
     let replacement = name + (isBranch ? "/" : "") + numbers.joined(separator: ".")
     result = (result as NSString).replacingCharacters(in: match.range, with: replacement)
   }

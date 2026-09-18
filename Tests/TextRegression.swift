@@ -12,6 +12,24 @@ private func expectTextRegression(_ condition: Bool, file: StaticString = #file,
 
 func runTextRegressionTests() throws {
   let developerCases: [(String, String)] = [
+    ("D.E.V.一点一", "dev/1.1"),
+    ("D. E. V. 一点一", "dev/1.1"),
+    ("d.e.v一点十点零", "dev/1.10.0"),
+    ("D．E．V．一点一", "dev/1.1"),
+    ("D E V 一点一", "dev/1.1"),
+    ("D.E.V.1.1", "dev/1.1"),
+    ("DEV一点一", "dev/1.1"),
+    ("Dev 一点一。", "dev/1.1"),
+    ("DEV1.1", "DEV1.1"),
+    ("版本DEV一点一", "版本DEV一点一"),
+    ("切到D.E.V.一点一", "切到dev/1.1"),
+    ("在D.E.V.一点一分支", "在dev/1.1分支"),
+    ("D.E.V.斜杠一点一", "dev/1.1"),
+    ("`D.E.V.一点一`", "`D.E.V.一点一`"),
+    ("“D.E.V.一点一”", "“D.E.V.一点一”"),
+    ("/tmp/D.E.V.一点一", "/tmp/D.E.V.一点一"),
+    ("D.E.V.一点一.swift", "D.E.V.一点一.swift"),
+    ("D.E.V.example.com", "D.E.V.example.com"),
     ("在DEV一点一分支", "在dev/1.1分支"),
     ("切到 DEV 一点十点零 分支", "切到 dev/1.10.0 分支"),
     ("在DEV1.1分支", "在dev/1.1分支"),
@@ -39,6 +57,7 @@ func runTextRegressionTests() throws {
     expectTextRegression(formattedTranscript(input), expected)
   }
   expectTextRegression(formattedTranscript("在DEV一点一分支", paragraphBreaks: false), "在dev/1.1分支")
+  expectTextRegression(formattedTranscript("D.E.V.一点一", paragraphBreaks: false), "dev/1.1")
   let formattingCases: [(String, String)] = [
     ("第一修复登录，第二补充测试，第三发布版本。", "1. 修复登录\n2. 补充测试\n3. 发布版本"),
     ("第一名和第二名需要参加评审。", "第一名和第二名需要参加评审"),

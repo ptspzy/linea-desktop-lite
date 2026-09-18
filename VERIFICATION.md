@@ -1,3 +1,28 @@
+# 0.2.7 Spelled DEV Identifiers
+
+Local run: 2026-09-18. `D.E.V.一点一` now becomes `dev/1.1` without requiring
+the word `分支`. Dotted/fullwidth-dotted/spaced DEV spelling shares the existing
+identifier parser; a standalone spoken `DEV一点一` also normalizes. Quoted literals,
+paths, ordinary version descriptions and literal `DEV1.1` remain protected.
+
+- The reported text failed before the fix and passes afterward, including terminal
+  single-line formatting. Logs: `build/spelled-dev-{red,green}.log`.
+- Added a synthetic Tingting fixture for `D.E.V.一点一。` to the regular real-model
+  suite with an exact-match gate. The production recognition/formatting pipeline yields
+  `dev/1.1` (CER 0.0000) on native arm64 and x86_64/Rosetta.
+- `make lint coverage package smoke test-quality test-quality-x86
+  BUILD_DIR=build/spelled-dev` passed; log: `build/spelled-dev-verification.log`.
+  Core line coverage: 86.61%; formatter: 97.66%. This excludes the coordinator/native UI.
+- A separate exploratory Tingting rendering of `D E V 一点一。` still becomes
+  `低额为一点一` (CER 1.0000); see `build/spelled-dev-audio.log`. No unsafe phonetic
+  replacement was added. The passing dotted-spelling fixture is not evidence that all
+  letter pronunciations or human utterances now work. The prior `分之` error also remains open.
+- The verified Universal model-free 0.2.7 app is installed and running; the standard
+  build bundle is updated and 0.2.6 is backed up under `build/rollback`. The production
+  history checksum is unchanged across installation. No audio playback or volume changes.
+  Computer launched the app but accessibility inspection timed out; physical microphone,
+  cursor delivery and physical Intel/macOS 13 hardware were not revalidated.
+
 # 0.2.6 Omitted Branch Separator
 
 Local run: 2026-09-18. The reported `在DEV一点一分支` now becomes
