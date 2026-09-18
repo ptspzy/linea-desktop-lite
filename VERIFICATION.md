@@ -1,3 +1,28 @@
+# 0.2.6 Omitted Branch Separator
+
+Local run: 2026-09-18. The reported `在DEV一点一分支` now becomes
+`在dev/1.1分支`. Known branch prefixes may omit the slash only when the version
+is immediately followed by `分支` (horizontal spaces allowed). Existing explicit
+`DEV/1.1`, quoted text, paths and ordinary version descriptions remain unchanged.
+
+- The exact user text failed before the fix and passes afterward, including terminal
+  single-line formatting. Multiple components and two branches in one utterance are covered.
+- `make lint coverage package smoke test-quality test-quality-x86
+  BUILD_DIR=build/branch-context` passed. Core line coverage: 86.53%; formatter: 97.60%.
+  The existing branch/list/paragraph synthetic fixtures and long-audio gates pass on
+  native arm64 and x86_64/Rosetta. This is not physical Intel/macOS 13 verification.
+- An additional silent Tingting sample saying `在 DEV 一点一分支` failed exact audio
+  acceptance: Qwen produced `在Dev一点一分之` (CER 0.6000). Adding `分支` to CLI
+  hotwords did not resolve it and was not shipped. This homophone error remains open;
+  the formatter does not globally rewrite `分之` or guess arbitrary recognition errors.
+  Logs: `build/branch-context-{red,green,verification,audio,hotword}.log`.
+- The signed Universal model-free 0.2.6 bundle is installed and running, matches the
+  verified binary, and the standard build copy is updated. 0.2.5 is backed up under
+  `build/rollback`; the production history checksum is unchanged across installation.
+  No audio was played and no volume settings were changed. Computer launched the app
+  but its windowless accessibility inspection timed out, so physical microphone/cursor
+  delivery is not claimed as revalidated.
+
 # 0.2.5 Developer Dictation and Structure
 
 Local run: 2026-09-18. Scope: developer identifiers, explicit lists and paragraph breaks,

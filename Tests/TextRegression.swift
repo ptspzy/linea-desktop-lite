@@ -12,6 +12,16 @@ private func expectTextRegression(_ condition: Bool, file: StaticString = #file,
 
 func runTextRegressionTests() throws {
   let developerCases: [(String, String)] = [
+    ("在DEV一点一分支", "在dev/1.1分支"),
+    ("切到 DEV 一点十点零 分支", "切到 dev/1.10.0 分支"),
+    ("在DEV1.1分支", "在dev/1.1分支"),
+    ("从Dev一点一分支合并到Release二点零分支", "从dev/1.1分支合并到release/2.0分支"),
+    ("DEV一点一版本", "DEV一点一版本"),
+    ("DEV/1.1分支", "DEV/1.1分支"),
+    ("/tmp/DEV一点一分支", "/tmp/DEV一点一分支"),
+    ("DEV一点一.txt分支", "DEV一点一.txt分支"),
+    ("`DEV一点一分支`", "`DEV一点一分支`"),
+    ("“DEV一点一分支”", "“DEV一点一分支”"),
     ("分支是Dev斜杠一点一", "分支是dev/1.1"),
     ("切到 dev/一点一 分支", "切到 dev/1.1 分支"),
     ("合并到dev斜杠一点一分支", "合并到dev/1.1分支"),
@@ -28,6 +38,7 @@ func runTextRegressionTests() throws {
   for (input, expected) in developerCases {
     expectTextRegression(formattedTranscript(input), expected)
   }
+  expectTextRegression(formattedTranscript("在DEV一点一分支", paragraphBreaks: false), "在dev/1.1分支")
   let formattingCases: [(String, String)] = [
     ("第一修复登录，第二补充测试，第三发布版本。", "1. 修复登录\n2. 补充测试\n3. 发布版本"),
     ("第一名和第二名需要参加评审。", "第一名和第二名需要参加评审"),
