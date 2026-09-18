@@ -11,7 +11,45 @@ private func expectTextRegression(_ condition: Bool, file: StaticString = #file,
 }
 
 func runTextRegressionTests() throws {
+  let developerCases: [(String, String)] = [
+    ("分支是Dev斜杠一点一", "分支是dev/1.1"),
+    ("切到 dev/一点一 分支", "切到 dev/1.1 分支"),
+    ("合并到dev斜杠一点一分支", "合并到dev/1.1分支"),
+    ("切到 D E V 斜杠 一点一", "切到 dev/1.1"),
+    ("切到戴夫斜杠一点一分支", "切到dev/1.1分支"),
+    ("release/一点十点零", "release/1.10.0"),
+    ("hotfix／2点零点一", "hotfix/2.0.1"),
+    ("版本 v一点二点三", "版本 v1.2.3"),
+    ("DEV/1.1，src/一.swift，dev/一.txt", "DEV/1.1，src/一.swift，dev/一.txt"),
+    ("戴夫今天发布一点东西", "戴夫今天发布一点东西"),
+    ("`dev/一点一`", "`dev/一点一`"),
+    (#""dev斜杠一点一""#, #""dev斜杠一点一""#),
+  ]
+  for (input, expected) in developerCases {
+    expectTextRegression(formattedTranscript(input), expected)
+  }
   let formattingCases: [(String, String)] = [
+    ("第一修复登录，第二补充测试，第三发布版本。", "1. 修复登录\n2. 补充测试\n3. 发布版本"),
+    ("第一名和第二名需要参加评审。", "第一名和第二名需要参加评审"),
+    ("第一季度完成开发，第二季度开始上线。", "第一季度完成开发，第二季度开始上线"),
+    ("第一点修复登录。换行。第二点补充测试。", "1. 修复登录\n2. 补充测试"),
+    ("接口已经修复。换段。接下来补测试。换段。最后发布版本。",
+     "接口已经修复。\n\n接下来补测试。\n\n最后发布版本。"),
+    ("接口已经修复。换行。接下来补测试。", "接口已经修复。\n接下来补测试。"),
+    ("接口已经修复。\n接下来补测试。", "接口已经修复。\n接下来补测试。"),
+    ("这里需要换行处理，另外两个参数暂时保留。", "这里需要换行处理，另外两个参数暂时保留"),
+    ("这个字段的描述里面包含另外一个参数的信息，不能拆开。", "这个字段的描述里面包含另外一个参数的信息，不能拆开"),
+    ("请原样保留“换段”这两个字。", "请原样保留“换段”这两个字"),
+    ("```swift\nlet 一 = 二\n```", "```swift\nlet 一 = 二\n```"),
+    ("第一，修复登录。第二，补充测试。第三，发布版本。", "1. 修复登录\n2. 补充测试\n3. 发布版本"),
+    ("今天的任务：第一步修复登录，第二步补充测试，第三步发布版本。",
+     "今天的任务：\n1. 修复登录\n2. 补充测试\n3. 发布版本"),
+    ("第一点是延迟，第二点是准确率，第三点是稳定性。", "1. 延迟\n2. 准确率\n3. 稳定性"),
+    ("第一天写接口，第二天补测试。", "第一天写接口，第二天补测试"),
+    ("第一，修复登录，第三，发布版本。", "第一，修复登录，第三，发布版本"),
+    ("下面有三点：第一，修复登录，第二，补充测试。", "下面有三点：第一，修复登录，第二，补充测试"),
+    (#"示例是"第一，修复登录，第二，补充测试""#, #"示例是"第一，修复登录，第二，补充测试""#),
+    ("示例是“第一，修复登录，第二，补充测试”", "示例是“第一，修复登录，第二，补充测试”"),
     ("当前先完成配置和本地测试 后续的话 再进行录音验证和发布检查 最后整理结果并确认功能稳定",
      "当前先完成配置和本地测试。\n\n后续的话，再进行录音验证和发布检查。\n\n最后整理结果并确认功能稳定。"),
     ("第一段保留。\n\n第二段保留。\n\n第三段保留。", "第一段保留。\n\n第二段保留。\n\n第三段保留。"),
@@ -111,15 +149,21 @@ func runTextRegressionTests() throws {
     "三点", "三点点一", "负负三", "负百分之负三", "百分之一点问题", "版本一律不变",
     "第一行星", "第十二点要求", "第负三行", "第三点一行", "端口三号文件", "一.二", "../一/二", "三点一四.txt",
     "src/一二.swift", #"C:\一\二.swift"#, "https://example.com/一二", "foo一二", "一二foo", "值_一二",
-    "v一点二点三", "变量三点一四", "let 一 = 二", "一 + 二", "函数(一)", "`一二三`", "`三点一四",
+    "变量三点一四", "let 一 = 二", "一 + 二", "函数(一)", "`一二三`", "`三点一四",
     "一 - 二", "一/二", "一 / 二", "一 % 二", "2 - 三",
     "let 一", "return 一", "let 一: 二", "for 一 in 二", "echo 一", "一两", "一点两", "一万万亿",
-    "```swift\nlet 一 = 二\n```", #""三点一四""#, #"print("三点一四")"#,
+    #""三点一四""#, #"print("三点一四")"#,
     "3.14159263", "-0.0010", "v1.2.3", "127.0.0.1", "localhost:8080", "3.50%",
   ]
   for input in unchangedNumbers {
     expectTextRegression(formattedTranscript(input), cleanedTranscript(input))
   }
+  expectTextRegression(cleanedQwenOutput("第一段。\n\n第二段。"), "第一段。\n\n第二段。")
+  expectTextRegression(cleanedQwenOutput("```swift\n  let x = 1\n```"), "```swift\n  let x = 1\n```")
+  expectTextRegression(
+    formattedTranscript("修复登录。换段。补充测试。", paragraphBreaks: false),
+    "修复登录。换段。补充测试。"
+  )
   expectTextRegression(formattedTranscript("三点一四一五九二六三", paragraphBreaks: false), "3.14159263")
   expectTextRegression(
     formattedTranscript("3.1 Apple 3.2 Banana", paragraphBreaks: false), "3.1 Apple 3.2 Banana"
@@ -146,6 +190,10 @@ func runTextRegressionTests() throws {
   expectTextRegression(
     applyWorkspaceVocabulary(to: "当前模型使用坤三 A S R零点六 B四 bit M L X balanced。", entries: defaultDeveloperVocabulary),
     "当前模型使用Qwen3-ASR0.6B4-bit MLX balanced。"
+  )
+  expectTextRegression(
+    applyWorkspaceVocabulary(to: "Release this Feature to DEV/1.1.", entries: defaultDeveloperVocabulary),
+    "Release this Feature to DEV/1.1."
   )
   let aliases = [
     WorkspaceVocabularyEntry(canonical: "Beta", aliases: ["Alpha"]),

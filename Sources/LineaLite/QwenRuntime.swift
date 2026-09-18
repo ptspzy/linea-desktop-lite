@@ -76,11 +76,33 @@ private enum QwenRuntimeError: LocalizedError {
   }
 }
 
-func qwenCommandArguments(modelURL: URL, audioURL: URL) -> [String] {
-  [
+func qwenHotwordList(_ words: [String]) -> String {
+  var seen: Set<String> = []
+  var selected: [String] = []
+  var bytes = 0
+  let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " ._/-+#@"))
+  for raw in words {
+    let word = raw.trimmingCharacters(in: .whitespaces)
+    guard (2...128).contains(word.count), word.rangeOfCharacter(from: allowed.inverted) == nil,
+          !seen.contains(word.lowercased()) else { continue }
+    let cost = word.utf8.count + (selected.isEmpty ? 0 : 2)
+    guard bytes + cost <= 1_024, selected.count < 64 else { continue }
+    selected.append(word)
+    seen.insert(word.lowercased())
+    bytes += cost
+  }
+  return selected.joined(separator: ", ")
+}
+
+func qwenCommandArguments(
+  modelURL: URL, audioURL: URL,
+  hotwords: [String] = defaultRecognitionHotwords
+) -> [String] {
+  let words = qwenHotwordList(hotwords)
+  return [
     "--backend", "qwen3", "-m", modelURL.path, "-f", audioURL.path,
     "-np", "-nt", "-l", "auto", "--lid-backend", "off",
-  ]
+  ] + (words.isEmpty ? [] : ["--hotwords", words])
 }
 
 func qwenServerArguments(modelURL: URL, port: Int) -> [String] {
@@ -92,7 +114,10 @@ func qwenServerArguments(modelURL: URL, port: Int) -> [String] {
 }
 
 func cleanedQwenOutput(_ value: String) -> String {
-  cleanedTranscript(value)
+  if value.contains("```") { return value.trimmingCharacters(in: .whitespacesAndNewlines) }
+  return value.replacingOccurrences(of: "\r\n", with: "\n")
+    .components(separatedBy: "\n").map(cleanedTranscript)
+    .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 func hasPathologicalRepetition(_ value: String) -> Bool {
@@ -177,17 +202,18 @@ func installQwenModel(
 func transcribeWithQwen(
   audioURL: URL,
   runtime: QwenRuntimeConfiguration? = nil,
+  hotwords: [String] = defaultRecognitionHotwords,
   diagnostics: ((QwenRuntimeDiagnostic) -> Void)? = nil
 ) throws -> String {
   try Task.checkCancellation()
   let configuration = try qwenRuntimeAndModel(runtime)
   return try transcribeRecognitionSegments(audioURL: audioURL, diagnostics: diagnostics) { url, attempt in
     if attempt == 0 {
-      return try qwenServer.transcribe(audioURL: url, configuration: configuration, diagnostics: diagnostics)
+      return try qwenServer.transcribe(audioURL: url, configuration: configuration, hotwords: hotwords, diagnostics: diagnostics)
     }
     // One independent CLI attempt also recovers empty/unstable responses from a live server.
     qwenServer.stop()
-    let command = configuration.command(arguments: qwenCommandArguments(modelURL: configuration.modelURL, audioURL: url))
+    let command = configuration.command(arguments: qwenCommandArguments(modelURL: configuration.modelURL, audioURL: url, hotwords: hotwords))
     return try processOutput(executableURL: command.executableURL, arguments: command.arguments, timeout: 180)
   }
 }
@@ -288,6 +314,7 @@ private final class QwenServer: @unchecked Sendable {
   func transcribe(
     audioURL: URL,
     configuration: QwenRuntimeConfiguration,
+    hotwords: [String],
     diagnostics: ((QwenRuntimeDiagnostic) -> Void)?
   ) throws -> String {
     var ready: QwenRuntimeDiagnostic?
@@ -300,15 +327,7 @@ private final class QwenServer: @unchecked Sendable {
       ready = try startIfNeeded(configuration: configuration)
       let output = try processOutput(
         executableURL: URL(fileURLWithPath: "/usr/bin/curl"),
-        arguments: [
-          "--fail", "--silent", "--show-error", "--noproxy", "*",
-          "--connect-timeout", "2", "--max-time", "180",
-          "--form", qwenAudioFormArgument(audioURL),
-          "--form", "language=auto",
-          "--form", "lid_backend=off",
-          "--form", "no_timestamps=true",
-          "http://127.0.0.1:\(port)/inference",
-        ],
+        arguments: qwenInferenceArguments(audioURL: audioURL, port: port, hotwords: hotwords),
         timeout: 182
       )
       return try qwenServerTranscript(output)
@@ -401,6 +420,19 @@ private final class QwenServer: @unchecked Sendable {
     idleStopWorkItem = workItem
     queue.asyncAfter(deadline: .now() + qwenIdleTimeout, execute: workItem)
   }
+}
+
+func qwenInferenceArguments(audioURL: URL, port: Int, hotwords: [String]) -> [String] {
+  [
+    "--fail", "--silent", "--show-error", "--noproxy", "*",
+    "--connect-timeout", "2", "--max-time", "180",
+    "--form", qwenAudioFormArgument(audioURL),
+    "--form", "language=auto", "--form", "lid_backend=off",
+    "--form", "no_timestamps=true",
+    // Literal form data: never interpret vocabulary as curl file uploads.
+    "--form-string", "hotwords=\(qwenHotwordList(hotwords))",
+    "http://127.0.0.1:\(port)/inference",
+  ]
 }
 
 func qwenAudioFormArgument(_ url: URL) -> String {

@@ -31,6 +31,10 @@ let defaultDeveloperVocabulary = [
   WorkspaceVocabularyEntry(canonical: "MLX", aliases: ["M L X"]),
 ]
 
+// Recognition hints must not lowercase common English words during text replacement.
+let defaultRecognitionHotwords = defaultDeveloperVocabulary.map(\.canonical)
+  + ["dev", "develop", "release", "hotfix", "feature", "bugfix"]
+
 private struct WorkspaceVocabularyFile: Codable {
   let terms: [WorkspaceVocabularyEntry]
 }

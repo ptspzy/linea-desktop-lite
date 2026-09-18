@@ -362,7 +362,7 @@ private final class DictationEngine {
     if let url { try? FileManager.default.removeItem(at: url) }
   }
 
-  func stopAndTranscribe(_ completion: @escaping (Result<DictationResult, Error>) -> Void) {
+  func stopAndTranscribe(hotwords: [String], _ completion: @escaping (Result<DictationResult, Error>) -> Void) {
     guard let url = audioURL, let startedAt else {
       completion(.failure(DictationError.noAudio))
       return
@@ -376,7 +376,7 @@ private final class DictationEngine {
       completion(.failure(DictationError.noAudio))
       return
     }
-    transcribe(url: url, duration: duration, completion)
+    transcribe(url: url, duration: duration, hotwords: hotwords, completion)
   }
 
   private func stopRecording() {
@@ -391,6 +391,7 @@ private final class DictationEngine {
   private func transcribe(
     url: URL,
     duration: TimeInterval,
+    hotwords: [String],
     _ completion: @escaping (Result<DictationResult, Error>) -> Void
   ) {
     isTranscribing = true
@@ -412,7 +413,7 @@ private final class DictationEngine {
           var segments = 0
           var retries = 0
           var serverSeconds: TimeInterval = 0
-          let text = try transcribeWithQwen(audioURL: url) { event in
+          let text = try transcribeWithQwen(audioURL: url, hotwords: hotwords) { event in
             switch event {
             case .serverReady(_, let seconds): serverSeconds += seconds
             case .retry: retries += 1
@@ -460,13 +461,13 @@ private final class DictationEngine {
     try? FileManager.default.removeItem(at: url)
   }
 
-  func retry(_ completion: @escaping (Result<DictationResult, Error>) -> Void) {
+  func retry(hotwords: [String], _ completion: @escaping (Result<DictationResult, Error>) -> Void) {
     guard !isBusy, let recording = recovery.available() else {
       completion(.failure(DictationError.noAudio))
       return
     }
     audioURL = recording.url
-    transcribe(url: recording.url, duration: recording.duration, completion)
+    transcribe(url: recording.url, duration: recording.duration, hotwords: hotwords, completion)
   }
 
   func shutdown() {
@@ -888,6 +889,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     refreshMenu()
   }
 
+  private var recognitionHotwords: [String] {
+    (personalVocabulary + workspaceVocabulary).map(\.canonical) + defaultRecognitionHotwords
+  }
+
   private func finishDictation() {
     shortcut.reset()
     guard engine.isRecording else {
@@ -900,7 +905,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     hud.showProcessing()
     status = "正在本地识别"
 
-    engine.stopAndTranscribe { [weak self] result in
+    engine.stopAndTranscribe(hotwords: recognitionHotwords) { [weak self] result in
       self?.completeDictation(result, allowInsertion: true)
     }
     refreshMenu()
@@ -1046,7 +1051,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     captureReadyDelay = 0
     status = "正在重试上次录音"
     hud.showProcessing()
-    engine.retry { [weak self] result in self?.completeDictation(result, allowInsertion: false) }
+    engine.retry(hotwords: recognitionHotwords) { [weak self] result in self?.completeDictation(result, allowInsertion: false) }
     refreshMenu()
   }
 

@@ -27,6 +27,7 @@ expect(
   ) == [
     "--backend", "qwen3", "-m", "/models/qwen.gguf", "-f", "/tmp/sample.wav",
     "-np", "-nt", "-l", "auto", "--lid-backend", "off",
+    "--hotwords", "Qwen3-ASR, 0.6B, 4-bit, MLX, dev, develop, release, hotfix, feature, bugfix",
   ]
 )
 expect(cleanedQwenOutput("  最后一句没有缺少。\n") == "最后一句没有缺少。")

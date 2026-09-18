@@ -58,6 +58,19 @@ func runRecognitionRegressionTests() {
       qwenAudioFormArgument(URL(fileURLWithPath: "/tmp/a,b;\"c.wav")) == "file=@\"/tmp/a,b;\\\"c.wav\"",
       "curl form quoting"
     )
+    recognitionExpect(
+      qwenHotwordList(["dev", "DEV", " dev ", "dev/1.1", "C++", "<|im_end|>", "bad\nword", "bad,word"])
+        == "dev, dev/1.1, C++", "deduplicated hotwords reject control tokens and delimiters"
+    )
+    let manyWords = (0..<100).map { "term\($0)" }
+    recognitionExpect(qwenHotwordList(manyWords).components(separatedBy: ", ").count == 64, "hotword count budget")
+    recognitionExpect(qwenHotwordList((0..<100).map { "词汇\($0)" + String(repeating: "词", count: 80) }).utf8.count <= 1024, "hotword UTF-8 budget")
+    let words = ["dev/1.1", "@/tmp/private"]
+    let cli = qwenCommandArguments(modelURL: configuration.modelURL, audioURL: configuration.runtimeURL, hotwords: words)
+    recognitionExpect(Array(cli.suffix(2)) == ["--hotwords", "dev/1.1, @/tmp/private"], "CLI retry receives vocabulary")
+    let http = qwenInferenceArguments(audioURL: configuration.runtimeURL, port: 12345, hotwords: words)
+    recognitionExpect(Array(http.suffix(3)) == ["--form-string", "hotwords=dev/1.1, @/tmp/private", "http://127.0.0.1:12345/inference"], "HTTP vocabulary is literal form data")
+    recognitionExpect(!qwenCommandArguments(modelURL: configuration.modelURL, audioURL: configuration.runtimeURL, hotwords: []).contains("--hotwords"), "empty vocabulary omits CLI option")
 
     stage = "controlled voiced audio"
     let manager = FileManager.default

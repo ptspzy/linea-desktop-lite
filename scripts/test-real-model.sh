@@ -86,6 +86,12 @@ if [[ -n "$MANIFEST" ]]; then
 else
   check_audio "$AUDIO" "$REFERENCE" Qwen3-ASR 0.6B 4-bit MLX balanced
   check_audio "$ROOT/Tests/Fixtures/spoken-decimal.wav" "数值是3.14159263" 3.14159263
+  check_audio "$ROOT/Tests/Fixtures/developer-branch.wav" "分支是dev/1.1" "dev/1.1"
+  check_audio "$ROOT/Tests/Fixtures/developer-list.wav" \
+    $'1. 修复登录\n2. 补充测试\n3. 发布版本' $'1. 修复登录\n2. 补充测试\n3. 发布版本'
+  check_audio "$ROOT/Tests/Fixtures/developer-paragraphs.wav" \
+    $'接口已经修复。\n\n接下来补测试。\n\n最后发布版本。' \
+    $'接口已经修复。\n\n接下来补测试。\n\n最后发布版本。'
 fi
 
 # Synthetic fixture only: three separated utterances cover beginning/middle/end without playback.

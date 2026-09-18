@@ -1,3 +1,46 @@
+# 0.2.5 Developer Dictation and Structure
+
+Local run: 2026-09-18. Scope: developer identifiers, explicit lists and paragraph breaks,
+keeping the existing local Qwen model, lightweight app, single-sentence punctuation preference,
+and terminal single-line safety. No cloud rewriting, new model, or runtime dependency was added.
+
+References reviewed (behavioral comparison, not copied implementation):
+
+- [Handy transcription pipeline](https://github.com/cjpais/Handy/blob/ba10ce1943ef34e93c09494027fc0b9ced2e8a44/src-tauri/src/managers/transcription.rs):
+  vocabulary at decode time where supported, separate post-correction otherwise.
+- [Handy cleanup prompt](https://github.com/cjpais/Handy/blob/ba10ce1943ef34e93c09494027fc0b9ced2e8a44/src-tauri/src/settings.rs):
+  numeric/symbol normalization with meaning and order preservation.
+- [Wispr Flow smart formatting](https://docs.wisprflow.ai/articles/5373093536-how-do-i-use-smart-formatting-and-backtrack):
+  ordinal lists and explicit line/paragraph commands.
+
+Changes and acceptance:
+
+- Existing personal/workspace canonical terms now reach local Qwen HTTP requests and CLI retries.
+  Deduplication, 64-term/1,024-byte limits and literal form encoding are tested. Recognition-only
+  hints do not lowercase ordinary English prose or modify personal vocabulary files.
+- `dev/一点一`, spoken slash variants and multi-component versions normalize locally.
+  Paths, quoted literals, dates/rankings, missing list items and existing numeric identifiers
+  have negative regression cases. Ambiguous omitted separators are not guessed.
+- Consecutive `第一/第二/第三` and `第一点/第一步` work without an announced total.
+  Distinct `换行/换段` between phrases preserve structure. Existing newlines and fenced code
+  survive; paragraph cues inside ordinary words no longer split prose.
+- Red/green logs are under `build/*-red.log` and `build/*-green.log`.
+- Final `make lint coverage package smoke test-quality test-quality-x86
+  BUILD_DIR=build/developer-format` passed. Core line coverage: 86.49%; formatter: 97.58%.
+  Coverage excludes the app coordinator and native UI, not whole-app coverage.
+- All three new synthetic audio fixtures produce exact expected branch/list/paragraph results
+  (CER 0.0000) on native arm64 and x86_64/Rosetta. Decimal and three-segment completeness gates pass.
+- Universal model-free DMG verifies. Installed `/Applications/Linea Lite.app` and the normal
+  build bundle match the verified 0.2.5 binary; the application is running. 0.2.4 is backed up
+  under `build/rollback`. The production history checksum is unchanged.
+
+Limits: these are reproducible synthetic integration tests, not a head-to-head accuracy benchmark
+against commercial products. Early combined utterances still exposed model-dependent word/separator
+errors; arbitrary phonetic mistakes are not safely recoverable by formatting alone. The private
+human-reference corpus is unavailable. Physical microphone/cursor delivery and physical Intel/macOS
+13 hardware were not revalidated in this change; Computer could launch the accessory app but could
+not inspect its windowless UI. No audio playback or volume changes occurred.
+
 # 0.2.4 Straight-Edge Progress
 
 Local run: 2026-09-10. The moving fill now has a vertical leading edge, including the

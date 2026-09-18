@@ -16,7 +16,7 @@ private let inlineListMarkerExpression = try! NSRegularExpression(
   pattern: #"(?:^|[\s：:,，；;。.!！？?])([一二两三四五六七八九十]|[1-9][0-9]*)(?:[、.．)]?)\s*"#
 )
 private let spokenListMarkerExpression = try! NSRegularExpression(
-  pattern: #"(?:^|[\s：:,，；;。.!！？?])((?:第)?([一二两三四五六七八九十]|[1-9][0-9]*)点是)[，,。.!！？?：:\s]*"#
+  pattern: #"(?:^|[\s：:,，；;。.!！？?])(?:第([一二两三四五六七八九十]|[1-9][0-9]*)(?:[点项条步](?:是)?|(?![0-9零〇一二两三四五六七八九十百千万天年月季代名届次级层章节集册卷组轮版位个部]))|([一二两三四五六七八九十]|[1-9][0-9]*)点是)[，,。.!！？?：:；;、\s]*"#
 )
 private let compactThreeItemListExpression = try! NSRegularExpression(
   pattern: #"^(.*?有\s*(?:三|3)(?:种|个|项|点|条|类|份|组|步|方面|段)?)[：:.．]?\s*(?:一|1)[、.．)]?\s*(.+?)(?:二|2)[、.．)]?\s*(.+?)(?:三|3)[、.．)]?\s*(.+?)[。.!！？?]?$"#
@@ -46,13 +46,23 @@ func cleanedTranscript(_ value: String) -> String {
 }
 
 func formattedTranscript(_ value: String, paragraphBreaks: Bool = true) -> String {
+  // Preformatted code is literal, including indentation and line breaks.
+  if value.contains("```") {
+    return paragraphBreaks ? value.trimmingCharacters(in: .whitespacesAndNewlines) : cleanedTranscript(value)
+  }
+  let value = normalizedDeveloperIdentifiers(value)
+  let structured = paragraphBreaks ? expandedLayoutCommands(value) : value
   let cleaned = normalizedPunctuationSpacing(cleanedTranscript(value))
   guard !cleaned.isEmpty else { return "" }
-  let paragraphs = value.replacingOccurrences(of: "\r\n", with: "\n")
+  let paragraphs = structured.replacingOccurrences(of: "\r\n", with: "\n")
     .components(separatedBy: "\n\n")
-    .map { normalizedPunctuationSpacing(cleanedTranscript($0)) }
+    .map { paragraph in
+      paragraph.components(separatedBy: "\n")
+        .map { normalizedPunctuationSpacing(cleanedTranscript($0)) }
+        .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     .filter { !$0.isEmpty }
-  if paragraphBreaks, paragraphs.count == 1, let list = formattedExplicitList(cleaned) {
+  if paragraphBreaks, paragraphs.count == 1, let list = formattedExplicitList(paragraphs[0]) {
     return normalizedSpokenNumbers(list)
   }
 
@@ -60,11 +70,26 @@ func formattedTranscript(_ value: String, paragraphBreaks: Bool = true) -> Strin
   let formatted = sections
     .map { section in
       if paragraphBreaks, let list = formattedExplicitList(section) { return list }
-      return formatSentenceSequence(section)
+      return section.components(separatedBy: "\n").map(formatSentenceSequence).joined(separator: "\n")
     }
     .joined(separator: paragraphBreaks && sections.count > 1 ? "\n\n" : "")
   let result = paragraphBreaks ? groupedLongParagraphs(formatted) : formatted
   return normalizedSpokenNumbers(withoutSingleSentenceTerminalPunctuation(result))
+}
+
+private let layoutCommandExpression = try! NSRegularExpression(
+  pattern: #"(?:^|(?<=[\s，,。.!！？?；;：:]))(另起一段|换一段|新段落|下一段|换段|另起一行|换行)(?=$|[\s，,。.!！？?；;：:])[ \t，,。.!！？?；;：:]*"#
+)
+
+private func expandedLayoutCommands(_ text: String) -> String {
+  var result = text
+  for match in unquotedMatches(layoutCommandExpression, in: text).reversed() {
+    let command = (text as NSString).substring(with: match.range(at: 1))
+    result = (result as NSString).replacingCharacters(
+      in: match.range, with: command.hasSuffix("行") ? "\n" : "\n\n"
+    )
+  }
+  return result
 }
 
 private let spokenNumberExpression = try! NSRegularExpression(
@@ -74,7 +99,7 @@ private let spokenNumberContextExpression = try! NSRegularExpression(
   pattern: #"(版本号?|端口号?|行号|数值|数字|小数|圆周率|阈值|百分比|等于|设置为|设为|改为|改成|比如说|比如|例如|(?:参数|值|系数|常量)(?:为|是))(?:设置为|设为|改为|改成|为|是)?[\s：:]*$"#
 )
 private let quotedNumberExpression = try! NSRegularExpression(
-  pattern: #"`[^`]*(?:`|$)|"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)"#
+  pattern: #"`[^`]*(?:`|$)|"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|“[^”]*(?:”|$)|‘[^’]*(?:’|$)|「[^」]*(?:」|$)"#
 )
 private let technicalNumberExpression = try! NSRegularExpression(
   pattern: #"""
@@ -90,6 +115,39 @@ private let spokenDigits: [Character: String] = [
   "零": "0", "〇": "0", "一": "1", "二": "2", "两": "2", "三": "3", "四": "4",
   "五": "5", "六": "6", "七": "7", "八": "8", "九": "9",
 ]
+private let developerIdentifierExpression = try! NSRegularExpression(
+  pattern: #"""
+    (?<![A-Za-z0-9_./\\-])(?:
+      ((?i:dev|develop|release|hotfix|feature|bugfix|d\h+e\h+v)|戴夫|德夫|迪夫)
+      \h*(?:[/／]|正?斜杠|(?i:slash))\h*
+      ([0-9零〇一二两三四五六七八九十百千]+(?:\h*(?:点|[.．])\h*[0-9零〇一二两三四五六七八九十百千]+)+)
+      |([vV])([0-9零〇一二两三四五六七八九十百千]+(?:\h*(?:点|[.．])\h*[0-9零〇一二两三四五六七八九十百千]+)+)
+    )(?![A-Za-z0-9_./\\点零〇一二两三四五六七八九十百千-])
+    """#,
+  options: .allowCommentsAndWhitespace
+)
+
+private func normalizedDeveloperIdentifiers(_ text: String) -> String {
+  var result = text
+  for match in unquotedMatches(developerIdentifierExpression, in: text).reversed() {
+    let isBranch = match.range(at: 1).location != NSNotFound
+    let prefix = (text as NSString).substring(with: match.range(at: isBranch ? 1 : 3))
+    let raw = (text as NSString).substring(with: match.range(at: isBranch ? 2 : 4))
+      .replacingOccurrences(of: "．", with: "点").replacingOccurrences(of: ".", with: "点")
+      .filter { !$0.isWhitespace }
+    let parts = raw.split(separator: "点", omittingEmptySubsequences: false)
+    let numbers = parts.compactMap(spokenInteger)
+    guard numbers.count == parts.count else { continue }
+    let original = (text as NSString).substring(with: match.range)
+    let spokenBranch = isBranch && original.unicodeScalars.contains { $0.properties.isIdeographic }
+    let name = ["戴夫", "德夫", "迪夫"].contains(prefix) || prefix.contains(where: \.isWhitespace)
+      ? "dev" : (spokenBranch && prefix == prefix.capitalized ? prefix.lowercased() : prefix)
+    // Only explicit branch/version syntax is normalized, never arbitrary paths or identifiers.
+    let replacement = name + (isBranch ? "/" : "") + numbers.joined(separator: ".")
+    result = (result as NSString).replacingCharacters(in: match.range, with: replacement)
+  }
+  return result
+}
 private let spokenIntegerFormatter: NumberFormatter = {
   let formatter = NumberFormatter()
   formatter.locale = Locale(identifier: "zh_CN")
@@ -185,6 +243,7 @@ private func spokenNumber(_ token: String, version: Bool) -> String? {
 
 private func spokenInteger(_ text: Substring) -> String? {
   guard !text.isEmpty else { return nil }
+  if text.allSatisfy({ $0.isASCII && $0.isNumber }) { return String(text) }
   let digits = text.compactMap { spokenDigits[$0] }
   if digits.count == text.count {
     guard text.count == 1 || !text.contains("两") else { return nil }
@@ -305,20 +364,17 @@ private func formattedInlineList(_ text: String) -> String? {
 }
 
 private func formattedSpokenList(_ text: String) -> String? {
-  let matches = spokenListMarkerExpression.matches(
-    in: text,
-    range: NSRange(text.startIndex..., in: text)
-  )
+  let matches = unquotedMatches(spokenListMarkerExpression, in: text)
   guard matches.count >= 2,
         let firstRange = Range(matches[0].range, in: text) else { return nil }
 
   let heading = String(text[..<firstRange.lowerBound])
     .trimmingCharacters(in: listTrimCharacters)
-  guard !heading.isEmpty,
-        declaredListCount(in: heading) == matches.count else { return nil }
+  if let declared = declaredListCount(in: heading), declared != matches.count { return nil }
 
   let values = matches.compactMap { match -> Int? in
-    guard let range = Range(match.range(at: 2), in: text) else { return nil }
+    let group = match.range(at: 1).location == NSNotFound ? 2 : 1
+    guard let range = Range(match.range(at: group), in: text) else { return nil }
     return numberValue(String(text[range]))
   }
   guard values == Array(1...matches.count) else { return nil }
@@ -334,9 +390,17 @@ private func formattedSpokenList(_ text: String) -> String? {
     items.append(body)
   }
 
-  return heading + "：\n" + items.enumerated()
+  return (heading.isEmpty ? "" : heading + "：\n") + items.enumerated()
     .map { "\($0.offset + 1). \($0.element)" }
     .joined(separator: "\n")
+}
+
+private func unquotedMatches(_ expression: NSRegularExpression, in text: String) -> [NSTextCheckingResult] {
+  let range = NSRange(text.startIndex..., in: text)
+  let quoted = quotedNumberExpression.matches(in: text, range: range).map(\.range)
+  return expression.matches(in: text, range: range).filter { match in
+    !quoted.contains { NSIntersectionRange($0, match.range).length > 0 }
+  }
 }
 
 private func declaredListCount(in text: String) -> Int? {
@@ -388,6 +452,7 @@ private func strongParagraphSections(_ text: String) -> [String] {
 
 private func firstValidParagraphCue(in text: String) -> Range<String.Index>? {
   var searchStart = text.startIndex
+  let quoted = quotedNumberExpression.matches(in: text, range: NSRange(text.startIndex..., in: text))
 
   while searchStart < text.endIndex {
     let candidates = paragraphCues.compactMap {
@@ -402,7 +467,9 @@ private func firstValidParagraphCue(in text: String) -> Range<String.Index>? {
 
     let before = String(text[..<range.lowerBound])
     let after = String(text[range.lowerBound...])
-    if semanticUnitCount(before) >= 8, semanticUnitCount(after) >= 8 {
+    let boundary = before.last.map { $0.isWhitespace || "。！？.!?；;".contains($0) } ?? false
+    let isQuoted = quoted.contains { NSIntersectionRange($0.range, NSRange(range, in: text)).length > 0 }
+    if boundary, !isQuoted, semanticUnitCount(before) >= 8, semanticUnitCount(after) >= 8 {
       return range
     }
     searchStart = range.upperBound

@@ -15,6 +15,11 @@ Included:
 - Native automatic punctuation and local format-only paragraph/list formatting.
 - Exact spoken Chinese decimals and clear coding-number contexts use Arabic numerals; ambiguous prose,
   idioms, time expressions, and detected code/paths are preserved. Fractional zeros are not rounded away.
+- Explicit branch/version dictation such as `dev/一点一`, `dev斜杠一点一` and `v一点二点三`
+  becomes `dev/1.1`, `dev/1.1` and `v1.2.3`. Arbitrary Chinese filenames and quoted literals stay unchanged.
+- Consecutive spoken ordinals create numbered lines without requiring an announced item count.
+  Distinct `换行` / `换段` commands between phrases insert line / paragraph breaks; existing breaks and fenced code survive.
+  Terminal apps stay single-line and do not execute layout commands.
 - Choose right `Option`, right `Control`, right `Command`, or an exclusive custom modifier/key combination; tap to start/stop or hold for push-to-talk. Escape cancels recording or pending output.
 - Linea-style floating waveform while recording and processing.
 - Paste completed dictation at the current keyboard cursor, even when the editor does not expose AX focus metadata or the cursor moved during recording. Accessibility permission, released modifiers, and secure-input/password-field checks still apply. Retrying an older failed recording remains copy-only. A dispatched paste is not claimed as confirmed insertion.
@@ -22,6 +27,9 @@ Included:
 - Searchable local transcript history, full-text preview, copy/correction/delete actions, and a compact 16-week activity graph. Counts describe retained records, not lifetime usage; the menu bar shows today's retained count.
 - History retention of up to 500 records by default, with explicit 7/30/90-day options. Shortening retention or clearing history requires confirmation.
 - One active workspace vocabulary and explicit personal mistake-to-correction pairs for local product and technical terms. No training or cloud correction is performed.
+- Canonical vocabulary also biases local Qwen recognition, including CLI retries: at most 64 unique
+  terms / 1,024 UTF-8 bytes, with personal terms before workspace and built-in terms. Invalid prompt
+  delimiters are excluded. This is a recognition hint, not a guarantee or model fine-tuning.
 - Local diagnostics for capture readiness, model readiness, segmentation, retries, timings, permissions, OS and architecture without transcript or audio data.
 - Opt-in manual HTTPS version checks and verified installer downloads; models remain separate.
 
@@ -96,7 +104,8 @@ make test-hud
 `make test` runs optimized Swift checks with compiler warnings and complete concurrency violations treated as errors,
 including failure recovery, history migration, numbered text, shortcut states, and offline update transport tests. `make coverage`
 enforces at least 70% line coverage across the testable core. `make test-quality`
-silently replays the included short WAV and controlled long audio through the production segmentation/recognition/merge pipeline and enforces CER and required
+silently replays short speech, developer branch, list, paragraph and controlled long-audio fixtures
+through the production segmentation/recognition/merge pipeline and enforces CER and required
 developer terms; it never plays the audio. The model must already be installed, or supplied through
 `LINEA_MODEL_PATH`.
 
