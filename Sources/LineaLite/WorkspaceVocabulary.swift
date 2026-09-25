@@ -150,6 +150,22 @@ func loadWorkspaceVocabulary(from workspaceURL: URL) throws -> [WorkspaceVocabul
   return mergedVocabularyEntries(entries)
 }
 
+// Read refs through Git so packed refs and linked worktrees work without scanning source files.
+func workspaceBranchHotwords(from workspaceURL: URL) -> [String] {
+  guard workspaceURL.isFileURL else { return [] }
+  let base = ["--no-optional-locks", "-C", workspaceURL.path]
+  let git = URL(fileURLWithPath: "/usr/bin/git")
+  let current = (try? processOutput(executableURL: git,
+    arguments: base + ["symbolic-ref", "--quiet", "--short", "HEAD"], timeout: 2)) ?? ""
+  let recent = (try? processOutput(executableURL: git,
+    arguments: base + ["for-each-ref", "--count=24", "--sort=-committerdate",
+      "--format=%(refname:strip=2)", "refs/heads/"], timeout: 2)) ?? ""
+  var seen = Set<String>()
+  return (current + "\n" + recent).split(whereSeparator: \.isNewline).map(String.init).filter {
+    (2...128).contains($0.count) && seen.insert($0).inserted
+  }
+}
+
 private func mergedVocabularyEntries(
   _ entries: [WorkspaceVocabularyEntry]
 ) -> [WorkspaceVocabularyEntry] {

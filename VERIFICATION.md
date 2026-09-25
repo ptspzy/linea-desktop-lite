@@ -1,3 +1,26 @@
+# 0.2.8 Workspace Hints and Clipboard Recovery
+
+Local run: 2026-09-25. Git's current branch and up to 24 recent local refs now
+provide recognition hints, refreshed off the main thread when recording starts.
+They do not introduce global phonetic replacements. Personal terms and branch
+hints precede dependency names in the bounded recognition vocabulary.
+
+Overlapping paste operations retain the original clipboard; stale restore timers
+cannot restore an earlier dictation over the latest one. Explicit user copies and
+copy-only fallback remain intact. Regression tests use a private native pasteboard.
+
+- `make test`, native arm64 `make build lint`, and `make smoke test-quality`
+  passed in `build/developer-reliability`.
+- Git tests cover missing repositories, unborn branches, packed refs and deduplication.
+- Synthetic decimal, branch, spelled branch, list and paragraph fixtures have final
+  CER 0.0000; the three-segment completeness fixture also passes with CER 0.0000.
+- Quality output now reports raw and final CER against the same reference. Raw CER
+  includes formatting differences and must not be interpreted as semantic ASR error alone.
+- The expected private human-reference directory is absent. Physical shortcuts,
+  microphone-to-editor delivery, Intel and macOS 13 were not revalidated. No audio
+  playback or volume changes. No claims of measured human accuracy or latency gains.
+- Model-free arm64 0.2.8 build uses local signing, without Apple notarization.
+
 # 0.2.7 Spelled DEV Identifiers
 
 Local run: 2026-09-18. `D.E.V.一点一` now becomes `dev/1.1` without requiring

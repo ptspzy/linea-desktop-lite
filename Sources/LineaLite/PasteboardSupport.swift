@@ -57,6 +57,39 @@ struct PasteboardSnapshot {
   }
 }
 
+@MainActor
+final class DictationPasteboard {
+  private var original: PasteboardSnapshot?
+  private var lastChangeCount: Int?
+
+  func write(_ text: String, to pasteboard: NSPasteboard) -> Int? {
+    if lastChangeCount != pasteboard.changeCount {
+      original = PasteboardSnapshot(pasteboard: pasteboard)
+    }
+    let count = setPasteboardText(text, on: pasteboard)
+    guard let count else {
+      original?.restore(to: pasteboard, ifUnchangedSince: pasteboard.changeCount)
+      original = nil
+      lastChangeCount = nil
+      return nil
+    }
+    lastChangeCount = count
+    return count
+  }
+
+  func restore(_ pasteboard: NSPasteboard, after count: Int) {
+    guard lastChangeCount == count else { return }
+    original?.restore(to: pasteboard, ifUnchangedSince: count)
+    original = nil
+    lastChangeCount = nil
+  }
+
+  func keepCopiedText() {
+    original = nil
+    lastChangeCount = nil
+  }
+}
+
 func setPasteboardText(_ text: String, on pasteboard: NSPasteboard) -> Int? {
   pasteboard.clearContents()
   guard pasteboard.setString(text, forType: .string) else { return nil }

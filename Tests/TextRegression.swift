@@ -285,6 +285,20 @@ func runTextRegressionTests() throws {
 
   let workspaceURL = directory.appendingPathComponent("workspace")
   try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+  precondition(workspaceBranchHotwords(from: workspaceURL).isEmpty)
+  let git = URL(fileURLWithPath: "/usr/bin/git")
+  _ = try processOutput(executableURL: git,
+    arguments: ["init", "--initial-branch=dev/1.1", workspaceURL.path], timeout: 5)
+  precondition(workspaceBranchHotwords(from: workspaceURL) == ["dev/1.1"])
+  _ = try processOutput(executableURL: git,
+    arguments: ["-C", workspaceURL.path, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+      "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", "fixture"], timeout: 5)
+  _ = try processOutput(executableURL: git,
+    arguments: ["-C", workspaceURL.path, "branch", "feature/parser"], timeout: 5)
+  _ = try processOutput(executableURL: git,
+    arguments: ["-C", workspaceURL.path, "pack-refs", "--all"], timeout: 5)
+  let branches = workspaceBranchHotwords(from: workspaceURL)
+  precondition(branches.first == "dev/1.1" && Set(branches) == ["dev/1.1", "feature/parser"])
   let package = Data(#"{"name":"@linea/desktop","dependencies":{"swift-argument-parser":"1.5.0"}}"#.utf8)
   try package.write(to: workspaceURL.appendingPathComponent("package.json"))
   let composer = Data(#"{"name":"linea/backend","require":{"php":"^8.2","ext-json":"*","symfony/console":"^7"},"require-dev":{"phpunit/phpunit":"^11"}}"#.utf8)

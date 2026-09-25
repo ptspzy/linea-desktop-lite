@@ -2,6 +2,26 @@ import AppKit
 import Foundation
 
 func runInputRegressionTests() async throws {
+  await MainActor.run {
+    let board = NSPasteboard.withUniqueName()
+    defer { board.releaseGlobally() }
+    let delivery = DictationPasteboard()
+    _ = setPasteboardText("original", on: board)
+    let first = delivery.write("first dictation", to: board)!
+    let second = delivery.write("second dictation", to: board)!
+    delivery.restore(board, after: first)
+    precondition(board.string(forType: .string) == "second dictation")
+    delivery.restore(board, after: second)
+    precondition(board.string(forType: .string) == "original")
+    let third = delivery.write("third dictation", to: board)!
+    _ = setPasteboardText("user copied", on: board)
+    delivery.restore(board, after: third)
+    precondition(board.string(forType: .string) == "user copied")
+    let fourth = delivery.write("copy fallback", to: board)!
+    delivery.keepCopiedText()
+    delivery.restore(board, after: fourth)
+    precondition(board.string(forType: .string) == "copy fallback")
+  }
   let shortcut = CustomShortcut(keyCode: 2, modifiers: NSEvent.ModifierFlags([.control, .option]).rawValue,
                                 keyLabel: "D")
   precondition(shortcut.isValid)

@@ -104,10 +104,12 @@ private func checkQuality() throws {
   )
   let missingTerms = arguments.dropFirst(2).filter { !finalText.contains($0) }
   let distance = editDistance(Array(finalText), Array(reference))
+  let rawCER = Double(editDistance(Array(raw), Array(reference))) / Double(max(1, reference.count))
   let cer = Double(distance) / Double(max(1, reference.count))
   let maximumCER = Double(environment["LINEA_MAX_CER"] ?? "") ?? 0.20
   guard maximumCER.isFinite, maximumCER >= 0 else { throw QualityError.failed("LINEA_MAX_CER must be finite and nonnegative.") }
   print(finalText)
+  fputs(String(format: "RAW_CER %.4f\n", rawCER), stderr)
   fputs(String(format: "CER %.4f\n", cer), stderr)
   guard missingTerms.isEmpty else { throw QualityError.failed("Missing terms: \(missingTerms.joined(separator: ", "))") }
   guard cer <= maximumCER else {

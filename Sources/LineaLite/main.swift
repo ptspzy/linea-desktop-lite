@@ -511,6 +511,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   private var hasPromptedForModel = false
   private var workspaceURL: URL?
   private var workspaceVocabulary: [WorkspaceVocabularyEntry] = []
+  private var branchHotwords: [String] = []
+  private let dictationPasteboard = DictationPasteboard()
   private var shortcut = DictationShortcutState()
   private var shortcutChoice = PushToTalkShortcut(
     rawValue: appDefaults.string(forKey: "pushToTalkShortcut") ?? ""
@@ -813,6 +815,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       return
     }
     isStarting = true
+    if let workspaceURL { setWorkspace(workspaceURL, persist: false) }
     captureID = UUID()
     captureRequestedAt = ProcessInfo.processInfo.systemUptime
     targetAppName = NSWorkspace.shared.frontmostApplication?.localizedName
@@ -890,7 +893,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   }
 
   private var recognitionHotwords: [String] {
-    (personalVocabulary + workspaceVocabulary).map(\.canonical) + defaultRecognitionHotwords
+    personalVocabulary.map(\.canonical) + branchHotwords
+      + defaultRecognitionHotwords + workspaceVocabulary.map(\.canonical)
   }
 
   private func finishDictation() {
@@ -990,11 +994,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     }
     guard id == captureID else { return false }
     let pasteboard = NSPasteboard.general
-    let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
-    guard let dictationChangeCount = setPasteboardText(text, on: pasteboard) else {
-      snapshot.restore(to: pasteboard, ifUnchangedSince: pasteboard.changeCount)
-      return nil
-    }
+    guard let dictationChangeCount = dictationPasteboard.write(text, to: pasteboard) else { return nil }
 
     let trusted = AXIsProcessTrusted()
     pasteBlockReason = automaticPasteBlockReason(
@@ -1003,6 +1003,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
       focusedSubrole: allowInsertion && trusted ? focusedFieldSubrole() : nil
     )
     guard pasteBlockReason == nil else {
+      dictationPasteboard.keepCopiedText()
       return false
     }
 
@@ -1010,6 +1011,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     guard let down = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: true),
           let up = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: false) else {
       pasteBlockReason = "event-creation-failed"
+      dictationPasteboard.keepCopiedText()
       return false
     }
     down.flags = .maskCommand
@@ -1017,7 +1019,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
     DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-      snapshot.restore(to: pasteboard, ifUnchangedSince: dictationChangeCount)
+      self.dictationPasteboard.restore(pasteboard, after: dictationChangeCount)
     }
     return true
   }
@@ -1453,6 +1455,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
   @objc private func clearWorkspace(_ sender: Any?) {
     workspaceURL = nil
     workspaceVocabulary = []
+    branchHotwords = []
     appDefaults.removeObject(forKey: "workspacePath")
     status = "已取消工作区词库关联"
     refreshMenu()
@@ -1530,12 +1533,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     if persist { appDefaults.set(url.path, forKey: "workspacePath") }
     Task { @MainActor in
       let vocabulary = await Task.detached(priority: .utility) {
-        try? loadWorkspaceVocabulary(from: url)
+        (try? loadWorkspaceVocabulary(from: url), workspaceBranchHotwords(from: url))
       }.value
       guard self.workspaceURL == url else { return }
-      self.workspaceVocabulary = vocabulary ?? []
+      self.workspaceVocabulary = vocabulary.0 ?? []
+      self.branchHotwords = vocabulary.1
       if !self.engine.isBusy && !self.isStarting {
-        self.status = vocabulary == nil ? "工作区词库读取失败" : "已加载 \(vocabulary!.count) 个工作区词条"
+        self.status = vocabulary.0 == nil ? "工作区词库读取失败" : "已加载 \(self.workspaceVocabulary.count + self.branchHotwords.count) 个工作区词条"
       }
       self.refreshMenu()
     }
