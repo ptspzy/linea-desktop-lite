@@ -1,0 +1,7 @@
+Generated with the built-in image_gen tool. Master: AppIcon.png.
+
+Use case: logo-brand. Asset: final macOS application icon for Linea Lite, a minimal local developer voice dictation tool. Redesign with quiet premium precision, simpler and much less inflated than a glossy 3D icon. One centered, custom geometric L monogram with two short vertical sound bars nested above its horizontal foot: a unified compact symbol suggesting voice becoming a line of text. Consistent medium-bold strokes, subtle rounded ends, generous negative space. Neutral graphite-black macOS continuous rounded-square tile occupying 82 percent of square canvas. White to very light silver symbol, almost flat with only a barely perceptible fine satin edge. Restrained soft directional light on tile, no visible grain, no shiny plastic, no bevel stack, no heavy shadow, no bulbous cushion, no vibrant colors, no chrome, no microphone, no letters or labels outside monogram, no decorative details. Perfect straight-on orthographic app asset, symmetric margins, actual transparent area outside tile. The mark must be recognizable at 16 and 32 pixels. Do not copy any competitor logo. Single finished icon only, no mockup or presentation board.
+
+Visual research (inspiration only; no competitor assets used):
+https://superwhisper.com/assets
+https://apps.apple.com/br/app/wispr-flow-ai-voice-dictation/id6497229487
